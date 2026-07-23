@@ -15,7 +15,18 @@ def pick_device() -> str:
     try:
         import torch
         if torch.cuda.is_available():
-            return "cuda"
+            # Guard against GPUs the installed torch can't actually use
+            # (e.g. Kaggle's Tesla P100 = sm_60, dropped by recent torch builds).
+            try:
+                major, _ = torch.cuda.get_device_capability(0)
+                supported = torch.cuda.get_arch_list()  # e.g. ['sm_70', ...]
+                if any(int(a.split("_")[1]) // 10 <= major for a in supported if a.startswith("sm_")):
+                    torch.zeros(1, device="cuda")  # prove a real op works
+                    return "cuda"
+                print(f"[warn] GPU sm_{major}0 not supported by this torch "
+                      f"({supported}); falling back to CPU. Pick a T4 GPU on Kaggle.")
+            except Exception as e:  # noqa: BLE001 — any CUDA init failure -> CPU
+                print(f"[warn] CUDA present but unusable ({e}); falling back to CPU.")
         if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
             return "mps"  # Apple Silicon, for local smoke tests
     except ImportError:
