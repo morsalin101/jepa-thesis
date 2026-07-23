@@ -22,3 +22,6 @@ kaggle.json
 # OS / editor
 .DS_Store
 .ipynb_checkpoints/
+
+# Kaggle run artifacts pulled locally
+kaggle_output/
