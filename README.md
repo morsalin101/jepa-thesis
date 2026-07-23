@@ -16,17 +16,17 @@ scripts/        setup_kaggle_auth.sh, run_on_kaggle.sh
 1. **Kaggle CLI auth** (already installed). Get a token at
    kaggle.com -> Settings -> API -> *Create New Token* (downloads `kaggle.json`).
    ```bash
-   ./scripts/setup_kaggle_auth.sh <username> <api_key>
+   ./scripts/setup_kaggle_auth.sh morsalin101 <api_key>
    # or drop kaggle.json into ~/.kaggle/ yourself, then rerun to verify
    ```
-2. **Fill in your identifiers** (replace `USERNAME`):
+2. **Fill in your identifiers** (replace `morsalin101`):
    - `notebooks/kaggle_runner.ipynb`  -> `REPO_URL`
    - `notebooks/kernel-metadata.json` -> `id`  (e.g. `myuser/jepa-thesis-runner`)
 3. **Create the GitHub repo** and push:
    ```bash
    git add -A && git commit -m "scaffold: local dev + kaggle runner"
    git branch -M main
-   git remote add origin https://github.com/USERNAME/jepa-thesis.git
+   git remote add origin https://github.com/morsalin101/jepa-thesis.git
    git push -u origin main
    ```
 
@@ -41,8 +41,8 @@ git add -A && git commit -m "..." && git push
 
 # 3. run on Kaggle GPU (headless) — notebook git-pulls then trains
 ./scripts/run_on_kaggle.sh
-python3 -m kaggle kernels status  <username>/jepa-thesis-runner
-python3 -m kaggle kernels output  <username>/jepa-thesis-runner -p ./outputs
+python3 -m kaggle kernels status  morsalin101/jepa-thesis-runner
+python3 -m kaggle kernels output  morsalin101/jepa-thesis-runner -p ./outputs
 ```
 
 Prefer the UI? Open the pushed notebook on kaggle.com, set Accelerator=GPU +
@@ -53,4 +53,4 @@ Internet=On, and hit *Run All*. Same notebook either way.
 - Only `/kaggle/working` persists; checkpoints go there (handled in `src/config.py`).
 - Attach datasets under `dataset_sources` in `kernel-metadata.json`; they mount at `/kaggle/input`.
 - Free GPU quota is ~30 hrs/week. Keep `src/train.py` as the one entrypoint.
-```
+
