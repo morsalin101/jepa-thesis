@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Data & outputs (don't commit large artifacts)
+data/
+outputs/
+*.ckpt
+*.pt
+*.pth
+
+# Secrets — NEVER commit these
+kaggle.json
+.kaggle/
+*.env
+.env
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/
