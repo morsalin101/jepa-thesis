@@ -7,7 +7,7 @@
   "is_private": true,
   "enable_gpu": true,
   "enable_internet": true,
-  "dataset_sources": [],
+  "dataset_sources": ["tschandl/isic2018-challenge-task1-data-segmentation"],
   "competition_sources": [],
   "kernel_sources": []
 }

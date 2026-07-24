@@ -1,0 +1,18 @@
+img_size: 96
+patch_size: 8
+enc_dim: 192
+enc_depth: 12
+enc_heads: 3
+enc_mlp_ratio: 4.0
+pred_dim: 192
+pred_depth: 6
+pred_heads: 4
+pred_mlp_ratio: 4.0
+mask_scale: [0.15, 0.20]
+mask_aspect: [0.75, 1.5]
+ema_momentum: 0.996
+enc_lr: 1.0e-3
+pred_lr: 1.0e-3
+weight_decay: 0.05
+batch_size: 64
+epochs: 1

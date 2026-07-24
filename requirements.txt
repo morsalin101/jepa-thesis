@@ -1,6 +1,10 @@
-# Local dev + Kaggle. Kaggle images already ship torch/cuda, so on Kaggle you
-# usually DON'T reinstall torch (it's preinstalled and CUDA-matched).
+# Local dev + Kaggle. Kaggle images already ship torch + torchvision, so on Kaggle you
+# usually DON'T reinstall them (preinstalled and CUDA-matched).
 # Pin only what you actually import.
 numpy
 tqdm
-# torch  # uncomment for local install; on Kaggle it's already present
+einops
+pyyaml
+Pillow
+# torch         # uncomment for local install; on Kaggle it's already present
+# torchvision   # uncomment for local install; on Kaggle it's already present
