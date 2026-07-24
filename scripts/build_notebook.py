@@ -18,16 +18,20 @@ SRC_FILES = [
     "src/__init__.py",
     "src/config.py",
     "src/data.py",
+    "src/data_seg.py",
     "src/utils/__init__.py",
     "src/utils/masking.py",
     "src/model/__init__.py",
     "src/model/vit.py",
     "src/model/predictor.py",
     "src/model/jepa.py",
+    "src/model/unet.py",
     "src/engine/__init__.py",
     "src/engine/pretrain.py",
+    "src/engine/segment.py",
     "src/train.py",
     "configs/pretrain_jepa.yaml",
+    "configs/segment_unet.yaml",
 ]
 
 
@@ -74,6 +78,12 @@ def build() -> dict:
         "\n"
         "**Re-running locally?** Regenerate this notebook with "
         "`python3 scripts/build_notebook.py` after editing `src/`.\n"
+        "\n"
+        "**Phases:**\n"
+        "1. Setup (cells 1–6)\n"
+        "2. Write source files (cells 7–N)\n"
+        "3. Pretrain JEPA (cells N+1, N+2) — self-supervised, no labels used\n"
+        "4. Segment with UNet (cells N+3..end) — supervised with masks, encoder from JEPA ckpt\n"
     ))
 
     cells.append(code_cell(
@@ -151,7 +161,7 @@ def build() -> dict:
         "    print('  (not on Kaggle)')\n"
     ))
 
-    if True:  # placeholder so we can later conditionally skip
+    if True:
         for rel in SRC_FILES:
             body = (ROOT / rel).read_text()
             cells.append(writefile_cell(rel, body))
@@ -162,29 +172,44 @@ def build() -> dict:
         "\n"
         "import src.config\n"
         "import src.data\n"
+        "import src.data_seg\n"
         "import src.model.vit\n"
         "import src.model.predictor\n"
         "import src.model.jepa\n"
+        "import src.model.unet\n"
         "import src.engine.pretrain\n"
+        "import src.engine.segment\n"
         "importlib.reload(src.config)\n"
         "importlib.reload(src.data)\n"
+        "importlib.reload(src.data_seg)\n"
         "importlib.reload(src.model.vit)\n"
         "importlib.reload(src.model.predictor)\n"
         "importlib.reload(src.model.jepa)\n"
+        "importlib.reload(src.model.unet)\n"
         "importlib.reload(src.engine.pretrain)\n"
+        "importlib.reload(src.engine.segment)\n"
         "from src.config import CONFIG\n"
         "from src.model.vit import ViT\n"
         "from src.model.jepa import IJEPA\n"
+        "from src.model.unet import ViTUNet\n"
         "from src.utils.masking import sample_target_block\n"
         "\n"
         "print('device:', CONFIG.device)\n"
-        "print('img:', CONFIG.jepa.img_size, 'patch:', CONFIG.jepa.patch_size,\n"
-        "      'tokens:', CONFIG.jepa.n_h * CONFIG.jepa.n_w)\n"
+        "print('jepa: img=', CONFIG.jepa.img_size, 'patch=', CONFIG.jepa.patch_size,\n"
+        "      'tokens=', CONFIG.jepa.n_h * CONFIG.jepa.n_w)\n"
+        "print('seg:  img=', CONFIG.seg.img_size, 'bs=', CONFIG.seg.batch_size,\n"
+        "      'epochs=', CONFIG.seg.epochs)\n"
         "\n"
         "vit = ViT(img_size=96, patch_size=8, dim=192, depth=12, heads=3).to(CONFIG.device)\n"
         "x = torch.randn(2, 3, 96, 96, device=CONFIG.device)\n"
         "out = vit(x)\n"
         "print('ViT forward shape:', tuple(out.shape))\n"
+        "\n"
+        "unet = ViTUNet(img_size=96, patch_size=8, dim=192, depth=12, heads=3).to(CONFIG.device)\n"
+        "y = unet(x)\n"
+        "print('UNet forward shape:', tuple(y.shape))\n"
+        "n = sum(p.numel() for p in unet.parameters() if p.requires_grad)\n"
+        "print(f'UNet trainable params: {n/1e6:.2f}M')\n"
         "\n"
         "m = sample_target_block(12, 12)\n"
         "print('mask sample: ctx=', m['n_ctx'], 'tgt=', m['n_tgt'])\n"
@@ -199,7 +224,31 @@ def build() -> dict:
     ))
 
     cells.append(code_cell(
-        "!python -m src.train --mode pretrain --epochs 1\n"
+        "!python -m src.train --mode pretrain --epochs 10\n"
+    ))
+
+    cells.append(md_cell(
+        "## Segmentation phase\n"
+        "\n"
+        "UNet with ViT-T encoder, encoder initialized from JEPA ckpt.\n"
+        "Loss = BCE + Dice. Encoder frozen for first 3 epochs (linear probe), then unfrozen.\n"
+        "Visualizations (image / GT mask / pred mask) saved every `seg_vis_every_epochs` epochs.\n"
+    ))
+
+    cells.append(code_cell(
+        "!ls -la /kaggle/working/*.pt 2>/dev/null || echo 'no JEPA ckpt yet — run the pretrain cell first'\n"
+        "!python -m src.train --mode segment --epochs 30\n"
+    ))
+
+    cells.append(code_cell(
+        "from IPython.display import Image as IPyImage, display\n"
+        "import glob, os\n"
+        "files = sorted(glob.glob('/kaggle/working/seg_epoch*.png'))\n"
+        "print(f'found {len(files)} segmentation visualizations:')\n"
+        "for f in files:\n"
+        "    print(' ', f)\n"
+        "if files:\n"
+        "    display(IPyImage(filename=files[-1]))\n"
     ))
 
     return {

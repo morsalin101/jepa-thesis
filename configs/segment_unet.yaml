@@ -1,0 +1,16 @@
+img_size: 96
+patch_size: 8
+enc_dim: 192
+enc_depth: 12
+enc_heads: 3
+mlp_ratio: 4.0
+
+lr: 1.0e-4
+enc_lr: 1.0e-5
+weight_decay: 0.05
+batch_size: 32
+epochs: 30
+freeze_encoder_epochs: 3
+vis_every_epochs: 5
+
+pretrained_ckpt: /kaggle/working/jepa_vit_tiny_final.pt

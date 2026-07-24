@@ -1,7 +1,8 @@
 """Training entrypoint.
 
 Run locally (CPU/MPS smoke test):   python -m src.train --mode pretrain --epochs 1
-Run on Kaggle (GPU):                same command inside the notebook cell.
+                                    python -m src.train --mode segment --epochs 30
+Run on Kaggle (GPU):                same commands in the notebook cells.
 
 Keep this file as the single entrypoint the Kaggle notebook calls, so the
 "run" surface never changes even as the model code grows.
@@ -12,14 +13,15 @@ import argparse
 
 from src.config import CONFIG, on_kaggle
 from src.engine.pretrain import pretrain
+from src.engine.segment import segment
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="JEPA training")
     p.add_argument("--mode", choices=["pretrain", "segment"], default="pretrain")
-    p.add_argument("--epochs", type=int, default=CONFIG.jepa.epochs)
-    p.add_argument("--batch-size", type=int, default=CONFIG.jepa.batch_size)
-    p.add_argument("--lr", type=float, default=CONFIG.jepa.enc_lr)
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--lr", type=float, default=None)
     return p.parse_args()
 
 
@@ -31,13 +33,24 @@ def main() -> None:
     print(f"[hparams] mode={args.mode} epochs={args.epochs} batch_size={args.batch_size} lr={args.lr}")
 
     if args.mode == "pretrain":
-        CONFIG.jepa.epochs = args.epochs
-        CONFIG.jepa.batch_size = args.batch_size
-        CONFIG.jepa.enc_lr = args.lr
-        CONFIG.jepa.pred_lr = args.lr
+        if args.epochs is not None:
+            CONFIG.jepa.epochs = args.epochs
+        if args.batch_size is not None:
+            CONFIG.jepa.batch_size = args.batch_size
+        if args.lr is not None:
+            CONFIG.jepa.enc_lr = args.lr
+            CONFIG.jepa.pred_lr = args.lr
         pretrain(CONFIG)
+    elif args.mode == "segment":
+        if args.epochs is not None:
+            CONFIG.seg.epochs = args.epochs
+        if args.batch_size is not None:
+            CONFIG.seg.batch_size = args.batch_size
+        if args.lr is not None:
+            CONFIG.seg.lr = args.lr
+        segment(CONFIG)
     else:
-        raise NotImplementedError("segment mode is scaffolded in the next pass")
+        raise NotImplementedError(f"mode={args.mode}")
 
 
 if __name__ == "__main__":

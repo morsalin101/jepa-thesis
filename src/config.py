@@ -108,20 +108,38 @@ class JEPACfg:
         return self.img_size // self.patch_size
 
 
-def _load_yaml_into_jepa(jepa: JEPACfg) -> None:
-    cfg_path = Path(__file__).resolve().parent.parent / "configs" / "pretrain_jepa.yaml"
+@dataclass
+class SegCfg:
+    img_size: int = 96
+    patch_size: int = 8
+    enc_dim: int = 192
+    enc_depth: int = 12
+    enc_heads: int = 3
+    mlp_ratio: float = 4.0
+    lr: float = 1e-4
+    enc_lr: float = 1e-5
+    weight_decay: float = 0.05
+    batch_size: int = 32
+    epochs: int = 30
+    freeze_encoder_epochs: int = 3
+    vis_every_epochs: int = 5
+    pretrained_ckpt: str = "/kaggle/working/jepa_vit_tiny_final.pt"
+
+
+def _load_yaml_into(target, yaml_name: str) -> None:
+    cfg_path = Path(__file__).resolve().parent.parent / "configs" / yaml_name
     if not cfg_path.exists():
         return
     try:
         import yaml
     except ImportError:
-        print("[warn] pyyaml not installed; skipping configs/pretrain_jepa.yaml")
+        print(f"[warn] pyyaml not installed; skipping configs/{yaml_name}")
         return
     with open(cfg_path) as f:
         data = yaml.safe_load(f) or {}
     for k, v in data.items():
-        if hasattr(jepa, k):
-            setattr(jepa, k, v)
+        if hasattr(target, k):
+            setattr(target, k, v)
 
 
 @dataclass
@@ -133,10 +151,14 @@ class Config:
     device: str = field(default_factory=pick_device)
     seed: int = 42
     jepa: JEPACfg = field(default_factory=JEPACfg)
+    seg: SegCfg = field(default_factory=SegCfg)
 
     def __post_init__(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        _load_yaml_into_jepa(self.jepa)
+        _load_yaml_into(self.jepa, "pretrain_jepa.yaml")
+        _load_yaml_into(self.seg, "segment_unet.yaml")
+        if hasattr(self.seg, "patch_size") and self.seg.patch_size != self.jepa.patch_size:
+            print("[warn] seg.patch_size != jepa.patch_size, JEPA ckpt may not match")
 
 
 CONFIG = Config()
