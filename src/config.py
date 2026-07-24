@@ -34,22 +34,47 @@ def pick_device() -> str:
 
 
 def find_isic_image_dir() -> Path:
-    if on_kaggle():
-        input_root = Path("/kaggle/input")
-        candidates = [
-            input_root / "isic2018-challenge-task1-data-segmentation" / "ISIC2018_Task1-2_Training_Input",
-            input_root / "isic2018-challenge-task1-data-segmentation",
-            input_root,
-        ]
-        for c in candidates:
-            if c.exists() and c.is_dir() and any(c.glob("*.jpg")):
-                return c
-        if input_root.exists():
-            for sub in input_root.rglob("*"):
-                if sub.is_dir() and any(sub.glob("*.jpg")):
-                    return sub
-        return candidates[0]
-    return Path("data/ISIC2018_Task1-2_Training_Input")
+    if not on_kaggle():
+        return Path("data/ISIC2018_Task1-2_Training_Input")
+    input_root = Path("/kaggle/input")
+    print(f"[data] scanning {input_root} ...")
+    if not input_root.exists():
+        print(f"[data] ERROR: {input_root} does not exist")
+        return Path("data/ISIC2018_Task1-2_Training_Input")
+    top = sorted(input_root.iterdir())
+    print(f"[data] top-level entries: {[p.name for p in top]}")
+    image_exts = ("*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.png", "*.PNG")
+    def has_imgs(d: Path) -> bool:
+        return any(d.glob(e) for e in image_exts)
+    candidates = [
+        input_root / "isic2018-challenge-task1-data-segmentation" / "ISIC2018_Task1-2_Training_Input",
+        input_root / "isic2018-challenge-task1-data-segmentation",
+    ]
+    for c in candidates:
+        exists = c.exists()
+        imgs = sum(len(list(c.glob(e))) for e in image_exts) if exists else 0
+        print(f"[data] candidate {c}  exists={exists}  imgs={imgs}")
+        if exists and imgs:
+            print(f"[data] using {c}")
+            return c
+    print("[data] candidates empty, scanning recursively ...")
+    matches: list[tuple[Path, int]] = []
+    for sub in input_root.rglob("*"):
+        if not sub.is_dir():
+            continue
+        n = sum(len(list(sub.glob(e))) for e in image_exts)
+        if n:
+            matches.append((sub, n))
+    matches.sort(key=lambda x: -x[1])
+    for p, n in matches[:10]:
+        print(f"[data]   found: {p}  ({n} images)")
+    if matches:
+        print(f"[data] using {matches[0][0]}")
+        return matches[0][0]
+    raise FileNotFoundError(
+        f"No images found under {input_root}. Attach the ISIC dataset via "
+        "kernel-metadata.json -> dataset_sources."
+    )
 
 
 @dataclass
