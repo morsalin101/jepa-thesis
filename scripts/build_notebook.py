@@ -108,8 +108,6 @@ def build() -> dict:
     ))
 
     cells.append(code_cell(
-        "%load_ext autoreload\n"
-        "%autoreload 2\n"
         "sh(f'pip install -q -r {WORKDIR}/requirements.txt')\n"
     ))
 
@@ -144,7 +142,21 @@ def build() -> dict:
             cells.append(writefile_cell(rel, body))
 
     cells.append(code_cell(
+        "import importlib\n"
         "import torch\n"
+        "\n"
+        "import src.config\n"
+        "import src.data\n"
+        "import src.model.vit\n"
+        "import src.model.predictor\n"
+        "import src.model.jepa\n"
+        "import src.engine.pretrain\n"
+        "importlib.reload(src.config)\n"
+        "importlib.reload(src.data)\n"
+        "importlib.reload(src.model.vit)\n"
+        "importlib.reload(src.model.predictor)\n"
+        "importlib.reload(src.model.jepa)\n"
+        "importlib.reload(src.engine.pretrain)\n"
         "from src.config import CONFIG\n"
         "from src.model.vit import ViT\n"
         "from src.model.jepa import IJEPA\n"
