@@ -158,6 +158,27 @@ def pretrain(cfg) -> Path:
         avg = sum(losses[-steps_per_epoch:]) / steps_per_epoch
         print(f"[epoch {epoch+1}] avg_loss={avg:.4f}")
 
+        save_every = getattr(cfg.jepa, "save_every_epochs", 10)
+        if save_every and (epoch + 1) % save_every == 0:
+            ckpt = cfg.output_dir / f"jepa_vit_tiny_epoch{epoch+1:03d}.pt"
+            torch.save(
+                {
+                    "context_enc": model.context_enc.state_dict(),
+                    "target_enc": model.target_enc.state_dict(),
+                    "epoch": epoch + 1,
+                    "avg_loss": avg,
+                    "config": {
+                        "img_size": cfg.jepa.img_size,
+                        "patch_size": cfg.jepa.patch_size,
+                        "enc_dim": cfg.jepa.enc_dim,
+                        "enc_depth": cfg.jepa.enc_depth,
+                        "enc_heads": cfg.jepa.enc_heads,
+                    },
+                },
+                ckpt,
+            )
+            print(f"[epoch {epoch+1}] saved {ckpt}")
+
     elapsed = time.time() - t0
     last_n = min(50, len(losses))
     print(
@@ -165,10 +186,11 @@ def pretrain(cfg) -> Path:
         f"first_loss={losses[0]:.4f}  last{last_n}_avg={sum(losses[-last_n:])/last_n:.4f}"
     )
 
-    ckpt_path = cfg.output_dir / "jepa_vit_tiny_smoke.pt"
+    ckpt_path = cfg.output_dir / "jepa_vit_tiny_final.pt"
     torch.save(
         {
             "context_enc": model.context_enc.state_dict(),
+            "target_enc": model.target_enc.state_dict(),
             "config": {
                 "img_size": cfg.jepa.img_size,
                 "patch_size": cfg.jepa.patch_size,

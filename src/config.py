@@ -97,6 +97,7 @@ class JEPACfg:
     weight_decay: float = 0.05
     batch_size: int = 64
     epochs: int = 1
+    save_every_epochs: int = 10
 
     @property
     def n_h(self) -> int:
