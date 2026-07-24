@@ -8,7 +8,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../notebooks" && pwd)"
-KERNEL_ID="$(python3 -c "import json; print(json.load(open('$DIR/kernel-metadata.json'))['id'])")
+KERNEL_ID="$(python3 -c "import json; print(json.load(open('$DIR/kernel-metadata.json'))['id'])")"
 
 source "$(dirname "${BASH_SOURCE[0]}")/_kaggle_resolve.sh"
 KG="$(kaggle_cmd)"
