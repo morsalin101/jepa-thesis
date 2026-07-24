@@ -18,6 +18,10 @@ else
 fi
 
 chmod 600 "$HOME/.kaggle/kaggle.json"
+
+source "$(dirname "${BASH_SOURCE[0]}")/_kaggle_resolve.sh"
+KG="$(kaggle_cmd)"
+
 echo "Verifying..."
-python3 -m kaggle datasets list -s titanic | head -3
+$KG datasets list -s titanic 2>/dev/null | head -3
 echo "Kaggle CLI authenticated."

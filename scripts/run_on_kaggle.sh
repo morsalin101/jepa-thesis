@@ -8,12 +8,15 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../notebooks" && pwd)"
-KERNEL_ID="$(python3 -c "import json,sys; print(json.load(open('$DIR/kernel-metadata.json'))['id'])")"
+KERNEL_ID="$(python3 -c "import json; print(json.load(open('$DIR/kernel-metadata.json'))['id'])")
+
+source "$(dirname "${BASH_SOURCE[0]}")/_kaggle_resolve.sh"
+KG="$(kaggle_cmd)"
 
 echo ">> Pushing kernel $KERNEL_ID ..."
-python3 -m kaggle kernels push -p "$DIR"
+$KG kernels push -p "$DIR"
 
 echo ">> Started. Watch status with:"
-echo "   python3 -m kaggle kernels status $KERNEL_ID"
+echo "   $KG kernels status $KERNEL_ID"
 echo ">> Fetch outputs when complete:"
-echo "   python3 -m kaggle kernels output $KERNEL_ID -p ./outputs"
+echo "   $KG kernels output $KERNEL_ID -p ./outputs"
