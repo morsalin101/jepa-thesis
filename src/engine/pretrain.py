@@ -62,6 +62,13 @@ def cosine_lr(step: int, total_steps: int, base_lr: float, warmup_steps: int = 1
 
 
 def pretrain(cfg) -> Path:
+    from src.config import on_kaggle
+    if on_kaggle() and cfg.device == "cpu":
+        raise RuntimeError(
+            "Aborting: Kaggle assigned a GPU that the installed PyTorch cannot use "
+            "(sm_60 P100 or older). On the Kaggle web UI, open this notebook, "
+            "Session options -> Accelerator -> GPU T4 x2, then re-run."
+        )
     print(f"[pretrain] device={cfg.device}  epochs={cfg.jepa.epochs}  bs={cfg.jepa.batch_size}")
     print(f"[pretrain] data_dir={cfg.data_dir}")
     print(f"[pretrain] img={cfg.jepa.img_size} patch={cfg.jepa.patch_size} "
