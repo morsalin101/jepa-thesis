@@ -129,11 +129,26 @@ def build() -> dict:
 
     cells.append(code_cell(
         "import os\n"
+        "from pathlib import Path\n"
+        "\n"
+        "print('=== repo tree ===')\n"
         "for root, dirs, files in os.walk('.'):\n"
         "    if '.git' in root or '__pycache__' in root:\n"
         "        continue\n"
         "    for f in sorted(files):\n"
         "        print(os.path.join(root, f))\n"
+        "\n"
+        "print()\n"
+        "print('=== /kaggle/input tree (datasets) ===')\n"
+        "input_root = Path('/kaggle/input')\n"
+        "if input_root.exists():\n"
+        "    for p in sorted(input_root.rglob('*')):\n"
+        "        if p.is_dir():\n"
+        "            n_imgs = len(list(p.glob('*.jpg'))) + len(list(p.glob('*.jpeg'))) + len(list(p.glob('*.png')))\n"
+        "            if n_imgs:\n"
+        "                print(f'  {p}   ({n_imgs} images)')\n"
+        "else:\n"
+        "    print('  (not on Kaggle)')\n"
     ))
 
     if True:  # placeholder so we can later conditionally skip

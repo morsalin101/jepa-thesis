@@ -35,18 +35,19 @@ def pick_device() -> str:
 
 def find_isic_image_dir() -> Path:
     if on_kaggle():
+        input_root = Path("/kaggle/input")
         candidates = [
-            Path("/kaggle/input/isic2018-challenge-task1-data-segmentation/ISIC2018_Task1-2_Training_Input"),
-            Path("/kaggle/input/isic2018-challenge-task1-data-segmentation"),
-            Path("/kaggle/input"),
+            input_root / "isic2018-challenge-task1-data-segmentation" / "ISIC2018_Task1-2_Training_Input",
+            input_root / "isic2018-challenge-task1-data-segmentation",
+            input_root,
         ]
         for c in candidates:
             if c.exists() and c.is_dir() and any(c.glob("*.jpg")):
                 return c
-        for top in Path("/kaggle/input").iterdir() if Path("/kaggle/input").exists() else []:
-            sub = top / "ISIC2018_Task1-2_Training_Input"
-            if sub.exists() and any(sub.glob("*.jpg")):
-                return sub
+        if input_root.exists():
+            for sub in input_root.rglob("*"):
+                if sub.is_dir() and any(sub.glob("*.jpg")):
+                    return sub
         return candidates[0]
     return Path("data/ISIC2018_Task1-2_Training_Input")
 
