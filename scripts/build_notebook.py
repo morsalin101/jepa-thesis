@@ -7,13 +7,16 @@ One notebook per job, because Kaggle's ~9h session cap means a job is the unit o
     segment        GPU session — 5 encoders x 5 seeds + ablations
     analysis       CPU session — probe, stats, tables, figures (no GPU needed)
 
-Each notebook clones the repo at a pinned branch and calls the module CLIs, so the code
-that runs on Kaggle is exactly the code in git — no drift between what you edited locally
-and what trained. Pass --embed to additionally inline every source file as a `%%writefile`
-cell, which lets you read and patch the code inside the Kaggle UI without a push/pull
-round-trip; it makes the notebook large, so it is off by default.
+Each notebook clones the repo at a pinned branch, then writes every source file out as its
+own `%%writefile` cell, then runs the job. That means when you open the notebook on Kaggle
+you can **read and edit every line of the code in the UI** and step through it cell by
+cell — while the clone still guarantees the starting point is exactly what is in git.
+
+Editing a source cell and re-running it patches that file for the session. Re-running the
+clone cell discards those edits and returns to the committed state.
 
     python scripts/build_notebook.py --user <kaggle-username>
+    python scripts/build_notebook.py --user <name> --no-embed   # smaller, clone-only
 """
 from __future__ import annotations
 
@@ -153,6 +156,15 @@ def embed_cells() -> list[dict]:
     return out
 
 
+def assemble(intro: dict, repo_url: str, branch: str, gpu: bool, embed: bool, body: list[dict]) -> list[dict]:
+    """intro -> clone/install/(gpu check) -> optional source cells -> the actual job.
+
+    The source cells must land *after* the clone (which would otherwise overwrite them)
+    and *before* the job cells (which import the code).
+    """
+    return [intro, *setup_cells(repo_url, branch, gpu), *(embed_cells() if embed else []), *body]
+
+
 def nb(cells: list[dict]) -> dict:
     return {
         "cells": cells,
@@ -187,8 +199,7 @@ def metadata(user: str, slug: str, gpu: bool, datasets: list[str], self_source: 
 
 
 def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
-    cells = [
-        md(
+    intro = md(
             "# Data preparation (CPU session — free, no GPU quota)\n\n"
             "1. Download HyperKvasir unlabeled (~24 GB) into `/kaggle/tmp` scratch and "
             "stream-resize to 256px (~3 GB), then publish as a private Kaggle Dataset.\n"
@@ -197,8 +208,8 @@ def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple
             "3. Generate the group-aware, stratified Kvasir-SEG splits.\n\n"
             "**Set the accelerator to None.** This is pure CPU work and a GPU session "
             "would burn quota for nothing."
-        ),
-        *setup_cells(repo_url, branch, gpu=False),
+    )
+    body = [
         code(
             "# ~30-60 min. Publishes morsalin101/hyperkvasir-unlabeled-256.\n"
             "# Requires KAGGLE_USERNAME / KAGGLE_KEY under Add-ons -> Secrets.\n"
@@ -250,8 +261,7 @@ def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple
             "      '  git add splits && git commit -m \\'data: splits + dedup list\\' && git push')\n"
         ),
     ]
-    if embed:
-        cells[3:3] = embed_cells()
+    cells = assemble(intro, repo_url, branch, False, embed, body)
     return "data-prep", nb(cells), metadata(user, "data-prep", False, ["debeshjha1/kvasirseg"], False)
 
 
@@ -261,8 +271,7 @@ def build_pretrain(
     slug = f"pretrain-{method}"
     cost = {"ijepa": "~8.8", "mae": "~4.5", "simclr": "~15.8", "mocov3": "~21.3"}[method]
     sessions = {"ijepa": 2, "mae": 1, "simclr": 3, "mocov3": 3}[method]
-    cells = [
-        md(
+    intro = md(
             f"# Pretrain {method} on HyperKvasir unlabeled\n\n"
             f"ViT-S/16 @ 224, global batch 512, 100 epochs. Estimated **{cost} GPU-hours** "
             f"(~{sessions} session(s) at the 7.5h guard).\n\n"
@@ -272,8 +281,8 @@ def build_pretrain(
             "*Save & Run All* again until it prints `run complete`.\n\n"
             "Requires **GPU T4 x2** and Internet ON, plus `KAGGLE_USERNAME`/`KAGGLE_KEY` "
             "under Add-ons → Secrets for cross-session checkpointing."
-        ),
-        *setup_cells(repo_url, branch, gpu=True),
+    )
+    body = [
         code(
             "from kaggle_secrets import UserSecretsClient\n"
             "s = UserSecretsClient()\n"
@@ -322,8 +331,7 @@ def build_pretrain(
             "    print('contents:', sorted(p.name for p in stage.glob('*.pt')))\n"
         ),
     ]
-    if embed:
-        cells[4:4] = embed_cells()
+    cells = assemble(intro, repo_url, branch, True, embed, body)
     datasets = [
         f"{user}/hyperkvasir-unlabeled-256",
         f"{user}/jepa-thesis-ckpt",
@@ -335,15 +343,14 @@ def build_pretrain(
 
 
 def build_segment(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
-    cells = [
-        md(
+    intro = md(
             "# Segmentation fine-tuning on Kvasir-SEG\n\n"
             "SegFormer all-MLP decoder on a ViT simple feature pyramid, 352px, 100 epochs.\n"
             "Five encoders x five seeds = 25 runs, ~4 GPU-hours total.\n\n"
             "Every arm uses the **identical** decoder, recipe, splits and seeds — only the "
             "encoder weights differ. Test is scored exactly once, on the best-val checkpoint."
-        ),
-        *setup_cells(repo_url, branch, gpu=True),
+    )
+    body = [
         code(
             "# Pull the four exported encoders published by the pretraining notebooks.\n"
             "import shutil, glob, pathlib\n"
@@ -377,21 +384,19 @@ def build_segment(user: str, repo_url: str, branch: str, embed: bool) -> tuple[s
             "    sh(f'python -m src.engine.segment --encoder {enc} --split 880_120 --seed 0', check=False)\n"
         ),
     ]
-    if embed:
-        cells[3:3] = embed_cells()
+    cells = assemble(intro, repo_url, branch, True, embed, body)
     datasets = ["debeshjha1/kvasirseg", f"{user}/jepa-thesis-weights"]
     return "segment", nb(cells), metadata(user, "segment", True, datasets, True)
 
 
 def build_analysis(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
-    cells = [
-        md(
+    intro = md(
             "# Analysis: probe, statistics, tables and figures\n\n"
             "Everything here reads the JSON/JSONL artefacts written during training, so it "
             "needs **no GPU** (except the frozen-feature probe, which is cheap). You can run "
             "the same commands on your laptop to iterate on figures."
-        ),
-        *setup_cells(repo_url, branch, gpu=True),
+    )
+    body = [
         code(
             "# k-NN + linear probe on frozen features. The cheapest signal about\n"
             "# representation quality — run it before trusting any segmentation number.\n"
@@ -411,8 +416,7 @@ def build_analysis(user: str, repo_url: str, branch: str, embed: bool) -> tuple[
             "display(Markdown(open('/kaggle/working/results/tables/all_tables.md').read()))\n"
         ),
     ]
-    if embed:
-        cells[3:3] = embed_cells()
+    cells = assemble(intro, repo_url, branch, True, embed, body)
     datasets = [
         "debeshjha1/kvasirseg",
         f"{user}/jepa-thesis-weights",
@@ -426,8 +430,13 @@ def main() -> None:
     ap.add_argument("--user", default="morsalin101")
     ap.add_argument("--repo", default="https://github.com/morsalin101/jepa-thesis.git")
     ap.add_argument("--branch", default="main")
-    ap.add_argument("--embed", action="store_true", help="inline all source as %%writefile cells")
+    ap.add_argument(
+        "--no-embed",
+        action="store_true",
+        help="omit the %%writefile source cells (smaller notebooks; code comes from the clone)",
+    )
     args = ap.parse_args()
+    args.embed = not args.no_embed
 
     builders = [
         build_data_prep(args.user, args.repo, args.branch, args.embed),

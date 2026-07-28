@@ -9,13 +9,18 @@ Replace `morsalin101` below if your Kaggle username differs.
 
 ## Step 0 — one-time setup (~10 min, no GPU)
 
-**a. Rotate your API token.** `kaggle.json` sat in the repo root in plaintext. Go to
-kaggle.com → Settings → API → **Expire Token**, then **Create New Token**, and put the new
-one at `~/.kaggle/kaggle.json` (chmod 600).
+**a. API token.** You need a valid one at `~/.kaggle/kaggle.json` (chmod 600) — you
+already have this. It is gitignored and untracked, so it has never reached GitHub; keep it
+that way. Rotating it (Settings → API → Expire Token → Create New Token) is optional
+housekeeping, not a prerequisite.
 
 **b. Add Kaggle Secrets.** In any Kaggle notebook: Add-ons → Secrets → add
-`KAGGLE_USERNAME` and `KAGGLE_KEY`. The notebooks need these to push checkpoints between
-sessions. Secrets are per-notebook — attach them to each one you run.
+`KAGGLE_USERNAME` and `KAGGLE_KEY`. Secrets are per-notebook — attach them to each one you
+run.
+
+This is not optional for pretraining. Without it the checkpoint pusher is disabled and
+state only lives in `/kaggle/working`, which is wiped when the session ends — so a
+100-epoch run could never get past the first 7.5 h.
 
 **c. Create the two datasets** (they must exist before the notebooks can reference them):
 
@@ -40,6 +45,15 @@ for nb in data-prep pretrain-ijepa pretrain-mae pretrain-simclr pretrain-mocov3 
   kaggle kernels push -p notebooks/$nb
 done
 ```
+
+Each notebook embeds all 38 source files as `%%writefile` cells, so once you open it on
+Kaggle you can read and edit every line in the UI and step through cell by cell. Cell
+order is: clone → install → **all source files** → the job. Edit a source cell and re-run
+it to patch that file for the session; re-run the clone cell to go back to what is in git.
+
+Re-run `build_notebook.py` and push again after any local code change, otherwise the
+embedded cells go stale relative to the clone. (`--no-embed` gives clone-only notebooks
+that are ~10× smaller if you ever prefer that.)
 
 ---
 
