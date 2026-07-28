@@ -1,3 +1,21 @@
+"""I-JEPA: encoder + predictor + EMA target encoder.
+
+The objective, in one line: encode a large *context* block, predict the representations
+of four disjoint *target* blocks, and compare against an exponential-moving-average copy
+of the same encoder run on the full image.
+
+Two details here are load-bearing and both were missing from the earlier scaffold:
+
+1. **`F.layer_norm` on the target encoder output, before masking.** Without it the model
+   can trivially minimise the loss by shrinking the target representations toward a
+   constant — representation collapse. The LayerNorm removes the scale degree of freedom
+   the collapse would exploit. This is the single most important line in the file.
+2. **The EMA update runs in fp32, outside autocast.** With momentum 0.9995 the update
+   term is `(1-m) = 5e-4` times a parameter of order 1e-2. In fp16 that rounds to zero,
+   so the target encoder silently stops tracking and the loss flatlines at a plausible
+   value. Nothing errors; the run is simply meaningless. Hence the explicit no_grad +
+   float path.
+"""
 from __future__ import annotations
 
 import copy
@@ -6,80 +24,84 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .predictor import Predictor
-from .vit import ViT
+from src.masks.utils import apply_masks, repeat_interleave_batch
+from src.model.predictor import VisionTransformerPredictor
+from src.model.vit import VisionTransformer, build_vit
 
 
 class IJEPA(nn.Module):
     def __init__(
         self,
-        img_size: int = 96,
-        patch_size: int = 8,
-        enc_dim: int = 192,
-        enc_depth: int = 12,
-        enc_heads: int = 3,
-        enc_mlp_ratio: float = 4.0,
-        pred_dim: int = 192,
+        arch: str = "vit_small",
+        img_size: int = 224,
+        patch_size: int = 16,
+        pred_emb_dim: int = 192,
         pred_depth: int = 6,
-        pred_heads: int = 4,
-        pred_mlp_ratio: float = 4.0,
-        ema_momentum: float = 0.996,
-    ):
+        drop_path_rate: float = 0.0,
+    ) -> None:
         super().__init__()
-        if enc_dim != pred_dim:
-            raise ValueError(
-                f"enc_dim ({enc_dim}) must equal pred_dim ({pred_dim}); "
-                "the scaffold assumes shared embedding space."
-            )
-        self.ema_momentum = ema_momentum
-
-        self.context_enc = ViT(
-            img_size=img_size,
-            patch_size=patch_size,
-            dim=enc_dim,
-            depth=enc_depth,
-            heads=enc_heads,
-            mlp_ratio=enc_mlp_ratio,
+        self.encoder: VisionTransformer = build_vit(
+            arch, img_size=img_size, patch_size=patch_size, drop_path_rate=drop_path_rate
         )
-        self.target_enc = copy.deepcopy(self.context_enc)
-        for p in self.target_enc.parameters():
+        self.predictor = VisionTransformerPredictor(
+            num_patches=self.encoder.patch_embed.num_patches,
+            embed_dim=self.encoder.embed_dim,
+            predictor_embed_dim=pred_emb_dim,
+            depth=pred_depth,
+            num_heads=self.encoder.num_heads,
+        )
+        # Target encoder starts as an exact copy and is only ever updated by EMA.
+        self.target_encoder: VisionTransformer = copy.deepcopy(self.encoder)
+        for p in self.target_encoder.parameters():
             p.requires_grad = False
 
-        self.predictor = Predictor(
-            n_patches=self.context_enc.n_patches,
-            dim=pred_dim,
-            depth=pred_depth,
-            heads=pred_heads,
-            mlp_ratio=pred_mlp_ratio,
-        )
-
     @torch.no_grad()
-    def update_target_encoder(self) -> None:
-        m = self.ema_momentum
-        for ctx_p, tgt_p in zip(self.context_enc.parameters(), self.target_enc.parameters()):
-            tgt_p.data.mul_(m).add_(ctx_p.data, alpha=1.0 - m)
+    def update_target_encoder(self, m: float) -> None:
+        """EMA: target <- m * target + (1 - m) * online.
+
+        Runs in fp32 regardless of the surrounding autocast context — see module
+        docstring for why that is not optional.
+        """
+        for q, k in zip(self.encoder.parameters(), self.target_encoder.parameters()):
+            k.data.mul_(m).add_(q.detach().data.to(k.dtype), alpha=1.0 - m)
+
+    def forward_target(
+        self, imgs: torch.Tensor, masks_pred: list[torch.Tensor], n_enc: int
+    ) -> torch.Tensor:
+        with torch.no_grad():
+            h = self.target_encoder(imgs)
+            h = F.layer_norm(h, (h.size(-1),))  # anti-collapse; see module docstring
+            B = len(h)
+            h = apply_masks(h, masks_pred)
+            return repeat_interleave_batch(h, B, repeat=n_enc)
+
+    def forward_context(
+        self,
+        imgs: torch.Tensor,
+        masks_enc: list[torch.Tensor],
+        masks_pred: list[torch.Tensor],
+    ) -> torch.Tensor:
+        z = self.encoder(imgs, masks_enc)
+        return self.predictor(z, masks_enc, masks_pred)
 
     def forward(
         self,
-        images: torch.Tensor,
-        ctx_indices: torch.Tensor,
-        ctx_valid: torch.Tensor,
-        tgt_indices: torch.Tensor,
-        tgt_valid: torch.Tensor,
-    ) -> torch.Tensor:
-        ctx_emb = self.context_enc.forward_context(images, ctx_indices, ctx_valid)
+        imgs: torch.Tensor,
+        masks_enc: list[torch.Tensor],
+        masks_pred: list[torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        h = self.forward_target(imgs, masks_pred, n_enc=len(masks_enc))
+        z = self.forward_context(imgs, masks_enc, masks_pred)
+        return z, h
 
-        with torch.no_grad():
-            tgt_emb_full = self.target_enc(images)
-            tgt_emb = torch.gather(
-                tgt_emb_full,
-                1,
-                tgt_indices.unsqueeze(-1).expand(-1, -1, tgt_emb_full.shape[-1]),
-            )
+    @staticmethod
+    def loss(z: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+        """Smooth L1 in fp32.
 
-        pred_emb = self.predictor(ctx_emb, ctx_valid, tgt_indices, tgt_valid)
+        The loss is order 1e-2 and fp16 has ~3 decimal digits there, so accumulating it
+        in half precision throws away most of the gradient signal.
+        """
+        return F.smooth_l1_loss(z.float(), h.float())
 
-        per = F.smooth_l1_loss(pred_emb, tgt_emb, reduction="none").mean(dim=-1)
-        mask = tgt_valid.float()
-        denom = mask.sum().clamp(min=1)
-        return (per * mask).sum() / denom
+    def checkpoint_modules(self) -> dict[str, nn.Module]:
+        return {"model": self}

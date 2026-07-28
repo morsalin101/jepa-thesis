@@ -1,0 +1,51 @@
+# SimCLR pretraining. Contrastive arm with no momentum encoder.
+#
+# Caveat to state in the thesis: SimCLR benefits substantially from batches far larger
+# than 512. Pinning global batch across all four methods is the right fairness call
+# (equal optimisation budget) but it does disadvantage SimCLR. Disclose it.
+#
+# Note the augmentation block is NOT the same as I-JEPA's. For SimCLR the augmentations
+# *are* the method — equalising them would misrepresent it, not make it fairer.
+method: simclr
+
+model:
+  arch: vit_small
+  patch_size: 16
+  img_size: 224
+  drop_path_rate: 0.0
+
+optim:
+  global_batch: 512
+  accum_steps: 1           # must stay 1: InfoNCE is batch-coupled, accumulation
+                           # shrinks the negative set instead of emulating a big batch
+  epochs: 100
+  warmup_epochs: 10
+  start_lr: 1.0e-5
+  ref_lr: 3.0e-4           # 1.5e-4 * batch/256, the AdamW-for-ViT rule from MoCo v3
+  final_lr: 1.0e-6
+  weight_decay: 0.1
+  final_weight_decay: 0.1
+  exclude_bias_and_norm_from_wd: true
+  ipe_scale: 1.0
+  grad_clip: 3.0
+
+contrastive:
+  proj_hidden_dim: 2048
+  proj_out_dim: 256
+  proj_num_layers: 3
+  temperature: 0.1         # SimCLR's tau; MoCo v3 uses 0.2
+
+aug:
+  crop_scale: [0.2, 1.0]
+  horizontal_flip: true
+  color_jitter_strength: 0.5
+  color_distortion: true
+  gaussian_blur: true
+  two_views: true
+
+runtime:
+  seed: 0
+  num_workers: 3
+  session_guard_hours: 7.5
+  ckpt_push_minutes: 45
+  ckpt_dataset_slug: ""

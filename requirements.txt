@@ -1,10 +1,17 @@
-# Local dev + Kaggle. Kaggle images already ship torch + torchvision, so on Kaggle you
-# usually DON'T reinstall them (preinstalled and CUDA-matched).
-# Pin only what you actually import.
+# Local dev + Kaggle. Kaggle images already ship torch + torchvision (CUDA-matched),
+# so those stay commented out — reinstalling them on Kaggle is slow and can break CUDA.
 numpy
 tqdm
-einops
 pyyaml
 Pillow
-# torch         # uncomment for local install; on Kaggle it's already present
-# torchvision   # uncomment for local install; on Kaggle it's already present
+matplotlib      # figures
+scipy           # HD95 distance transform, Wilcoxon, normal quantiles
+
+# Optional. Everything degrades gracefully without these:
+#   umap-learn   embedding-space figure falls back to PCA
+#   scikit-learn only needed for that PCA fallback
+# umap-learn
+# scikit-learn
+
+# torch         # uncomment for local install; preinstalled on Kaggle
+# torchvision   # uncomment for local install; preinstalled on Kaggle

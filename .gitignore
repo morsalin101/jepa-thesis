@@ -9,9 +9,14 @@ env/
 # Data & outputs (don't commit large artifacts)
 data/
 outputs/
+figures/
+results/
 *.ckpt
 *.pt
 *.pth
+
+# Read-only reference clone of facebookresearch/ijepa (see README)
+reference/
 
 # Secrets — NEVER commit these
 kaggle.json

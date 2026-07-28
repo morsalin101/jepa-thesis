@@ -1,0 +1,50 @@
+# MAE pretraining. The pixel-space arm of the comparison: everything except the
+# objective is identical to configs/pretrain_ijepa.yaml.
+#
+# Caveat to state in the thesis: MAE is known to keep improving out to 800-1600 epochs
+# while contrastive methods saturate earlier, so a fixed 100-epoch budget structurally
+# disadvantages it. Disclose, don't hide.
+method: mae
+
+model:
+  arch: vit_small
+  patch_size: 16
+  img_size: 224
+  drop_path_rate: 0.0
+
+optim:
+  global_batch: 512
+  accum_steps: 1
+  epochs: 100
+  warmup_epochs: 10
+  # MAE's rule is lr = 1.5e-4 * batch/256 -> 3.0e-4 at batch 512.
+  start_lr: 1.0e-5
+  ref_lr: 3.0e-4
+  final_lr: 1.0e-6
+  weight_decay: 0.05       # constant for MAE (final == ref)
+  final_weight_decay: 0.05
+  exclude_bias_and_norm_from_wd: true
+  ema: [0.996, 1.0]        # unused: MAE has no target encoder
+  ipe_scale: 1.0
+  grad_clip: 3.0
+
+mae:
+  mask_ratio: 0.75
+  decoder_embed_dim: 256   # 0.67 * 384, preserving MAE's own 512/768 ratio for ViT-B
+  decoder_depth: 8
+  decoder_num_heads: 8
+  norm_pix_loss: true      # per-patch target normalisation; clearly better in the paper
+
+aug:
+  crop_scale: [0.2, 1.0]   # MAE's published crop range
+  horizontal_flip: true    # MAE does use hflip, unlike i-jepa
+  color_distortion: false
+  gaussian_blur: false
+  two_views: false
+
+runtime:
+  seed: 0
+  num_workers: 3
+  session_guard_hours: 7.5
+  ckpt_push_minutes: 45
+  ckpt_dataset_slug: ""

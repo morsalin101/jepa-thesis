@@ -1,256 +1,159 @@
-"""Build notebooks/kaggle_runner.ipynb by embedding every src/ file as a
-%%writefile cell. The resulting notebook lets you run cells one by one in
-the Kaggle UI and see/edit every line of code.
+"""Generate the Kaggle notebooks and their kernel-metadata.
 
-Re-run this after editing src/ files locally:
-    python3 scripts/build_notebook.py
+One notebook per job, because Kaggle's ~9h session cap means a job is the unit of work:
+
+    data_prep      CPU session — build the 256px corpus, dedup, generate splits (free)
+    pretrain_<m>   GPU session — one per SSL method, resumable across sessions
+    segment        GPU session — 5 encoders x 5 seeds + ablations
+    analysis       CPU session — probe, stats, tables, figures (no GPU needed)
+
+Each notebook clones the repo at a pinned branch and calls the module CLIs, so the code
+that runs on Kaggle is exactly the code in git — no drift between what you edited locally
+and what trained. Pass --embed to additionally inline every source file as a `%%writefile`
+cell, which lets you read and patch the code inside the Kaggle UI without a push/pull
+round-trip; it makes the notebook large, so it is off by default.
+
+    python scripts/build_notebook.py --user <kaggle-username>
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-NOTEBOOK = ROOT / "notebooks" / "kaggle_runner.ipynb"
-
+NB_DIR = ROOT / "notebooks"
 
 SRC_FILES = [
     "src/__init__.py",
     "src/config.py",
-    "src/data.py",
-    "src/data_seg.py",
-    "src/utils/__init__.py",
-    "src/utils/masking.py",
+    "src/data/__init__.py",
+    "src/data/transforms.py",
+    "src/data/hyperkvasir.py",
+    "src/data/kvasir_seg.py",
+    "src/data/splits.py",
+    "src/masks/__init__.py",
+    "src/masks/utils.py",
+    "src/masks/multiblock.py",
     "src/model/__init__.py",
     "src/model/vit.py",
     "src/model/predictor.py",
     "src/model/jepa.py",
+    "src/model/mae.py",
+    "src/model/heads.py",
+    "src/model/simclr.py",
+    "src/model/mocov3.py",
+    "src/model/simple_fpn.py",
+    "src/model/segformer_head.py",
     "src/model/unet.py",
+    "src/utils/__init__.py",
+    "src/utils/schedulers.py",
+    "src/utils/checkpoint.py",
+    "src/utils/ddp.py",
+    "src/utils/kaggle_io.py",
     "src/engine/__init__.py",
     "src/engine/pretrain.py",
     "src/engine/segment.py",
-    "src/train.py",
-    "configs/pretrain_jepa.yaml",
-    "configs/segment_unet.yaml",
+    "src/eval/__init__.py",
+    "src/eval/metrics.py",
+    "src/eval/stats.py",
+    "src/eval/tables.py",
+    "src/eval/probe.py",
+    "src/viz/__init__.py",
+    "src/viz/style.py",
+    "src/viz/figures.py",
+    "src/viz/make_all.py",
 ]
 
 
-def code_cell(source: str) -> dict:
+def code(src: str) -> dict:
     return {
         "cell_type": "code",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
-        "source": source.splitlines(keepends=True),
+        "source": src.splitlines(keepends=True),
     }
 
 
-def md_cell(source: str) -> dict:
-    return {
-        "cell_type": "markdown",
-        "metadata": {},
-        "source": source.splitlines(keepends=True),
-    }
+def md(src: str) -> dict:
+    return {"cell_type": "markdown", "metadata": {}, "source": src.splitlines(keepends=True)}
 
 
-def writefile_cell(rel_path: str, body: str) -> dict:
-    src = f"%%writefile {rel_path}\n{body}"
-    if not src.endswith("\n"):
-        src += "\n"
-    return code_cell(src)
+def setup_cells(repo_url: str, branch: str, gpu: bool) -> list[dict]:
+    cells = [
+        code(
+            f'REPO_URL = "{repo_url}"\n'
+            f'BRANCH = "{branch}"\n'
+            'WORKDIR = "/kaggle/working/jepa-thesis"\n'
+        ),
+        code(
+            "import os, subprocess, sys\n"
+            "\n"
+            "def sh(cmd, check=True):\n"
+            "    print('$', cmd)\n"
+            "    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)\n"
+            "    if r.stdout: print(r.stdout)\n"
+            "    if r.stderr: print(r.stderr)\n"
+            "    if check and r.returncode != 0:\n"
+            "        raise RuntimeError(f'command failed (exit {r.returncode}): {cmd}')\n"
+            "    return r\n"
+            "\n"
+            "if subprocess.run(f'git ls-remote {REPO_URL}', shell=True,\n"
+            "                  capture_output=True).returncode != 0:\n"
+            "    raise RuntimeError('Cannot reach GitHub — turn Internet ON in the session options.')\n"
+            "\n"
+            "if os.path.exists(WORKDIR):\n"
+            "    sh(f'cd {WORKDIR} && git fetch origin && git reset --hard origin/{BRANCH}')\n"
+            "else:\n"
+            "    sh(f'git clone --branch {BRANCH} {REPO_URL} {WORKDIR}')\n"
+            "sh(f'cd {WORKDIR} && git log -1 --oneline')\n"
+            "os.chdir(WORKDIR)\n"
+            "sys.path.insert(0, WORKDIR)\n"
+        ),
+        code("sh('pip install -q -r requirements.txt')\n"),
+    ]
+    if gpu:
+        cells.append(
+            code(
+                "# Report the accelerator and the precision that follows from it.\n"
+                "# T4 (sm_75) has fp16 tensor cores but NO bf16 hardware; P100 (sm_60) has\n"
+                "# neither and runs ~2x slower. The code adapts either way — this cell is\n"
+                "# here so you know what you were given before spending 8 hours on it.\n"
+                "import torch\n"
+                "from src.config import amp_config\n"
+                "print('CUDA devices:', torch.cuda.device_count())\n"
+                "amp = amp_config()\n"
+                "print(amp)\n"
+                "if torch.cuda.device_count() < 2:\n"
+                "    print('\\n*** Only one GPU. I-JEPA and MAE will still run correctly, but\\n'\n"
+                "          '    SimCLR/MoCo v3 need 2 GPUs to preserve global_batch=512.\\n'\n"
+                "          '    Set Session options -> Accelerator -> GPU T4 x2 and re-run. ***')\n"
+            )
+        )
+    return cells
 
 
-def build() -> dict:
-    cells: list[dict] = []
+def embed_cells() -> list[dict]:
+    out = [
+        md(
+            "### Source files (editable)\n\n"
+            "Each cell below writes one file. Edit a cell and re-run it to patch the code "
+            "in this session without a git round-trip. Re-running the clone cell above "
+            "discards these edits."
+        )
+    ]
+    for rel in SRC_FILES:
+        p = ROOT / rel
+        if not p.is_file():
+            continue
+        body = p.read_text()
+        src = f"%%writefile {rel}\n{body}"
+        out.append(code(src if src.endswith("\n") else src + "\n"))
+    return out
 
-    cells.append(md_cell(
-        "# JEPA thesis — Kaggle UI runner\n"
-        "\n"
-        "This notebook embeds every file in `src/` and `configs/` as its own "
-        "cell so you can:\n"
-        "\n"
-        "1. **See** all the code in the Kaggle UI.\n"
-        "2. **Edit** any cell in-place and re-run just that cell to update the file.\n"
-        "3. **Run** the cells top-to-bottom, or one at a time to debug.\n"
-        "\n"
-        "**First time:** right sidebar → Accelerator → **GPU T4 x2**, Internet → **On**, "
-        "then *Save & Run All*.\n"
-        "\n"
-        "**Re-running locally?** Regenerate this notebook with "
-        "`python3 scripts/build_notebook.py` after editing `src/`.\n"
-        "\n"
-        "**Phases:**\n"
-        "1. Setup (cells 1–6)\n"
-        "2. Write source files (cells 7–N)\n"
-        "3. Pretrain JEPA (cells N+1, N+2) — self-supervised, no labels used\n"
-        "4. Segment with UNet (cells N+3..end) — supervised with masks, encoder from JEPA ckpt\n"
-    ))
 
-    cells.append(code_cell(
-        "REPO_URL = \"https://github.com/morsalin101/jepa-thesis.git\"\n"
-        "BRANCH = \"main\"\n"
-        "WORKDIR = \"/kaggle/working/jepa-thesis\"\n"
-        "REWRITE_FROM_NOTEBOOK = True  # if False, skip the %%writefile cells below\n"
-    ))
-
-    cells.append(code_cell(
-        "import os, subprocess\n"
-        "\n"
-        "def sh(cmd, check=True):\n"
-        "    print('$', cmd)\n"
-        "    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)\n"
-        "    if r.stdout: print(r.stdout)\n"
-        "    if r.stderr: print(r.stderr)\n"
-        "    if check and r.returncode != 0:\n"
-        "        raise RuntimeError(f\"command failed (exit {r.returncode}): {cmd}\")\n"
-        "    return r\n"
-        "\n"
-        "net = subprocess.run(f\"git ls-remote {REPO_URL}\", shell=True, capture_output=True, text=True)\n"
-        "if net.returncode != 0:\n"
-        "    raise RuntimeError(\"Cannot reach GitHub. Turn Internet ON.\")\n"
-        "\n"
-        "if os.path.exists(WORKDIR):\n"
-        "    sh(f'cd {WORKDIR} && git fetch origin && git reset --hard origin/{BRANCH}')\n"
-        "else:\n"
-        "    sh(f'git clone --branch {BRANCH} {REPO_URL} {WORKDIR}')\n"
-        "sh(f'cd {WORKDIR} && git log -1 --oneline')\n"
-        "os.chdir(WORKDIR)\n"
-    ))
-
-    cells.append(code_cell(
-        "sh(f'pip install -q -r {WORKDIR}/requirements.txt')\n"
-    ))
-
-    cells.append(code_cell(
-        "import torch\n"
-        "print('CUDA available:', torch.cuda.is_available())\n"
-        "if torch.cuda.is_available():\n"
-        "    name = torch.cuda.get_device_name(0)\n"
-        "    major, _ = torch.cuda.get_device_capability(0)\n"
-        "    print(f'Device: {name}  (sm_{major}0)')\n"
-        "    if major < 7:\n"
-        "        raise RuntimeError(\n"
-        "            f'GPU {name} (sm_{major}0) is too old for the installed PyTorch. '\n"
-        "            'Right sidebar -> Accelerator -> GPU T4 x2.'\n"
-        "        )\n"
-        "else:\n"
-        "    print('Device: CPU (no GPU)')\n"
-    ))
-
-    cells.append(code_cell(
-        "import os\n"
-        "from pathlib import Path\n"
-        "\n"
-        "print('=== repo tree ===')\n"
-        "for root, dirs, files in os.walk('.'):\n"
-        "    if '.git' in root or '__pycache__' in root:\n"
-        "        continue\n"
-        "    for f in sorted(files):\n"
-        "        print(os.path.join(root, f))\n"
-        "\n"
-        "print()\n"
-        "print('=== /kaggle/input tree (datasets) ===')\n"
-        "input_root = Path('/kaggle/input')\n"
-        "if input_root.exists():\n"
-        "    for p in sorted(input_root.rglob('*')):\n"
-        "        if p.is_dir():\n"
-        "            n_imgs = len(list(p.glob('*.jpg'))) + len(list(p.glob('*.jpeg'))) + len(list(p.glob('*.png')))\n"
-        "            if n_imgs:\n"
-        "                print(f'  {p}   ({n_imgs} images)')\n"
-        "else:\n"
-        "    print('  (not on Kaggle)')\n"
-    ))
-
-    if True:
-        for rel in SRC_FILES:
-            body = (ROOT / rel).read_text()
-            cells.append(writefile_cell(rel, body))
-
-    cells.append(code_cell(
-        "import importlib\n"
-        "import torch\n"
-        "\n"
-        "import src.config\n"
-        "import src.data\n"
-        "import src.data_seg\n"
-        "import src.model.vit\n"
-        "import src.model.predictor\n"
-        "import src.model.jepa\n"
-        "import src.model.unet\n"
-        "import src.engine.pretrain\n"
-        "import src.engine.segment\n"
-        "importlib.reload(src.config)\n"
-        "importlib.reload(src.data)\n"
-        "importlib.reload(src.data_seg)\n"
-        "importlib.reload(src.model.vit)\n"
-        "importlib.reload(src.model.predictor)\n"
-        "importlib.reload(src.model.jepa)\n"
-        "importlib.reload(src.model.unet)\n"
-        "importlib.reload(src.engine.pretrain)\n"
-        "importlib.reload(src.engine.segment)\n"
-        "from src.config import CONFIG\n"
-        "from src.model.vit import ViT\n"
-        "from src.model.jepa import IJEPA\n"
-        "from src.model.unet import ViTUNet\n"
-        "from src.utils.masking import sample_target_block\n"
-        "\n"
-        "print('device:', CONFIG.device)\n"
-        "print('jepa: img=', CONFIG.jepa.img_size, 'patch=', CONFIG.jepa.patch_size,\n"
-        "      'tokens=', CONFIG.jepa.n_h * CONFIG.jepa.n_w)\n"
-        "print('seg:  img=', CONFIG.seg.img_size, 'bs=', CONFIG.seg.batch_size,\n"
-        "      'epochs=', CONFIG.seg.epochs)\n"
-        "\n"
-        "vit = ViT(img_size=96, patch_size=8, dim=192, depth=12, heads=3).to(CONFIG.device)\n"
-        "x = torch.randn(2, 3, 96, 96, device=CONFIG.device)\n"
-        "out = vit(x)\n"
-        "print('ViT forward shape:', tuple(out.shape))\n"
-        "\n"
-        "unet = ViTUNet(img_size=96, patch_size=8, dim=192, depth=12, heads=3).to(CONFIG.device)\n"
-        "y = unet(x)\n"
-        "print('UNet forward shape:', tuple(y.shape))\n"
-        "n = sum(p.numel() for p in unet.parameters() if p.requires_grad)\n"
-        "print(f'UNet trainable params: {n/1e6:.2f}M')\n"
-        "\n"
-        "m = sample_target_block(12, 12)\n"
-        "print('mask sample: ctx=', m['n_ctx'], 'tgt=', m['n_tgt'])\n"
-        "\n"
-        "model = IJEPA(\n"
-        "    img_size=CONFIG.jepa.img_size, patch_size=CONFIG.jepa.patch_size,\n"
-        "    enc_dim=CONFIG.jepa.enc_dim, enc_depth=CONFIG.jepa.enc_depth, enc_heads=CONFIG.jepa.enc_heads,\n"
-        "    pred_dim=CONFIG.jepa.pred_dim, pred_depth=CONFIG.jepa.pred_depth, pred_heads=CONFIG.jepa.pred_heads,\n"
-        ").to(CONFIG.device)\n"
-        "n = sum(p.numel() for p in model.parameters() if p.requires_grad)\n"
-        "print(f'IJEPA trainable params: {n/1e6:.2f}M')\n"
-    ))
-
-    cells.append(code_cell(
-        "!python -m src.train --mode pretrain --epochs 10\n"
-    ))
-
-    cells.append(md_cell(
-        "## Segmentation phase\n"
-        "\n"
-        "UNet with ViT-T encoder, encoder initialized from JEPA ckpt.\n"
-        "Loss = BCE + Dice. Encoder frozen for first 3 epochs (linear probe), then unfrozen.\n"
-        "Visualizations (image / GT mask / pred mask) saved every `seg_vis_every_epochs` epochs.\n"
-    ))
-
-    cells.append(code_cell(
-        "!ls -la /kaggle/working/*.pt 2>/dev/null || echo 'no JEPA ckpt yet — run the pretrain cell first'\n"
-        "!python -m src.train --mode segment --epochs 30\n"
-    ))
-
-    cells.append(code_cell(
-        "from IPython.display import Image as IPyImage, display\n"
-        "import glob, os\n"
-        "files = sorted(glob.glob('/kaggle/working/seg_epoch*.png'))\n"
-        "print(f'found {len(files)} segmentation visualizations:')\n"
-        "for f in files:\n"
-        "    print(' ', f)\n"
-        "if files:\n"
-        "    display(IPyImage(filename=files[-1]))\n"
-    ))
-
+def nb(cells: list[dict]) -> dict:
     return {
         "cells": cells,
         "metadata": {
@@ -262,10 +165,285 @@ def build() -> dict:
     }
 
 
+def metadata(user: str, slug: str, gpu: bool, datasets: list[str], self_source: bool) -> dict:
+    m = {
+        "id": f"{user}/{slug}",
+        "title": slug,
+        "code_file": f"{slug}.ipynb",
+        "language": "python",
+        "kernel_type": "notebook",
+        "is_private": True,
+        "enable_gpu": gpu,
+        "enable_internet": True,
+        "dataset_sources": datasets,
+        "competition_sources": [],
+        # Mount this kernel's own previous output as a free fallback checkpoint mirror.
+        "kernel_sources": [f"{user}/{slug}"] if self_source else [],
+    }
+    return m
+
+
+# ------------------------------------------------------------------ notebooks
+
+
+def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
+    cells = [
+        md(
+            "# Data preparation (CPU session — free, no GPU quota)\n\n"
+            "1. Download HyperKvasir unlabeled (~24 GB) into `/kaggle/tmp` scratch and "
+            "stream-resize to 256px (~3 GB), then publish as a private Kaggle Dataset.\n"
+            "2. Perceptual-hash the corpus against Kvasir-SEG and exclude near-duplicates "
+            "— this prevents pretraining/test contamination and the count goes in the thesis.\n"
+            "3. Generate the group-aware, stratified Kvasir-SEG splits.\n\n"
+            "**Set the accelerator to None.** This is pure CPU work and a GPU session "
+            "would burn quota for nothing."
+        ),
+        *setup_cells(repo_url, branch, gpu=False),
+        code(
+            "# ~30-60 min. Publishes morsalin101/hyperkvasir-unlabeled-256.\n"
+            "# Requires KAGGLE_USERNAME / KAGGLE_KEY under Add-ons -> Secrets.\n"
+            "from kaggle_secrets import UserSecretsClient\n"
+            "s = UserSecretsClient()\n"
+            "os.environ['KAGGLE_USERNAME'] = s.get_secret('KAGGLE_USERNAME')\n"
+            "os.environ['KAGGLE_KEY'] = s.get_secret('KAGGLE_KEY')\n"
+            "\n"
+            f"sh('python scripts/build_hyperkvasir_dataset.py --publish {user}/hyperkvasir-unlabeled-256')\n"
+        ),
+        code(
+            "# The labelled split (10,662 images, 23 classes) — ~400 MB, a few minutes.\n"
+            "# Never trained on; used only by the k-NN / linear probe in the analysis\n"
+            "# notebook, which is the cheapest check that pretraining actually worked.\n"
+            f"sh('python scripts/build_hyperkvasir_dataset.py --split labeled "
+            f"--publish {user}/hyperkvasir-labeled-256')\n"
+        ),
+        code("sh('python scripts/dedup_phash.py --threshold 6')\n"),
+        code("sh('python -m src.data.splits')\n"),
+        code(
+            "print(open('splits/dedup_report.json').read())\n"
+            "print(open('splits/800_100_100/stats.json').read())\n"
+        ),
+        md(
+            "### Copy `splits/` back into git — required before segmentation\n\n"
+            "The later notebooks clone the repo from GitHub, so the split files and the "
+            "dedup exclusion list have to be **committed**, not just present here. The "
+            "cell below copies them to `/kaggle/working/splits_to_commit/`; download that "
+            "from the notebook's Output tab (or `kaggle kernels output`), drop it into "
+            "`splits/` locally, and push.\n\n"
+            "This is what guarantees every run — yours and anyone reproducing it — uses "
+            "byte-identical splits."
+        ),
+        code(
+            "import shutil\n"
+            "shutil.copytree('splits', '/kaggle/working/splits_to_commit', dirs_exist_ok=True)\n"
+            "for root, _, files in os.walk('/kaggle/working/splits_to_commit'):\n"
+            "    for f in sorted(files):\n"
+            "        print(os.path.join(root, f))\n"
+            "print('\\nRetrieve with:\\n'\n"
+            f"      '  kaggle kernels output {user}/data-prep -p /tmp/dp\\n'\n"
+            "      '  cp -r /tmp/dp/splits_to_commit/* splits/\\n'\n"
+            "      '  git add splits && git commit -m \\'data: splits + dedup list\\' && git push')\n"
+        ),
+    ]
+    if embed:
+        cells[3:3] = embed_cells()
+    return "data-prep", nb(cells), metadata(user, "data-prep", False, ["debeshjha1/kvasirseg"], False)
+
+
+def build_pretrain(
+    user: str, repo_url: str, branch: str, method: str, embed: bool
+) -> tuple[str, dict, dict]:
+    slug = f"pretrain-{method}"
+    cost = {"ijepa": "~8.8", "mae": "~4.5", "simclr": "~15.8", "mocov3": "~21.3"}[method]
+    sessions = {"ijepa": 2, "mae": 1, "simclr": 3, "mocov3": 3}[method]
+    cells = [
+        md(
+            f"# Pretrain {method} on HyperKvasir unlabeled\n\n"
+            f"ViT-S/16 @ 224, global batch 512, 100 epochs. Estimated **{cost} GPU-hours** "
+            f"(~{sessions} session(s) at the 7.5h guard).\n\n"
+            "**This notebook is resumable.** It stops cleanly before the session cap, saves "
+            "full training state (model, EMA target, optimizer, scaler, schedule position) "
+            "to a Kaggle Dataset, and picks up exactly where it left off next run. Just "
+            "*Save & Run All* again until it prints `run complete`.\n\n"
+            "Requires **GPU T4 x2** and Internet ON, plus `KAGGLE_USERNAME`/`KAGGLE_KEY` "
+            "under Add-ons → Secrets for cross-session checkpointing."
+        ),
+        *setup_cells(repo_url, branch, gpu=True),
+        code(
+            "from kaggle_secrets import UserSecretsClient\n"
+            "s = UserSecretsClient()\n"
+            "os.environ['KAGGLE_USERNAME'] = s.get_secret('KAGGLE_USERNAME')\n"
+            "os.environ['KAGGLE_KEY'] = s.get_secret('KAGGLE_KEY')\n"
+        ),
+        code(
+            f"sh('python -m src.engine.pretrain --method {method} "
+            f"--ckpt-slug {user}/jepa-thesis-ckpt --guard-hours 7.5', check=False)\n"
+        ),
+        code(
+            "# If the cell above printed 'N epochs remaining', the session guard stopped it\n"
+            "# cleanly — just Save & Run All again to continue. If it printed 'run complete',\n"
+            "# the exported encoder is in /kaggle/working/weights/ and the next cell ships it.\n"
+            "!ls -la /kaggle/working/weights/ 2>/dev/null || echo 'not finished yet — re-run'\n"
+        ),
+        code(
+            "# Publish the finished encoder (~88 MB) to the shared weights dataset that the\n"
+            "# segmentation notebook mounts. Safe to re-run; a no-op until the run completes.\n"
+            "import glob, json, pathlib, shutil, subprocess\n"
+            "\n"
+            f"SLUG = '{user}/jepa-thesis-weights'\n"
+            "found = glob.glob('/kaggle/working/weights/*.pt')\n"
+            "if not found:\n"
+            "    print('nothing to publish yet — pretraining has not finished')\n"
+            "else:\n"
+            "    stage = pathlib.Path('/kaggle/working/weights_upload')\n"
+            "    stage.mkdir(exist_ok=True)\n"
+            "    # Carry over any encoders already in the dataset so a new version never\n"
+            "    # drops the other methods' weights.\n"
+            "    for p in glob.glob('/kaggle/input/jepa-thesis-weights/*.pt'):\n"
+            "        shutil.copy(p, stage)\n"
+            "    for p in found:\n"
+            "        shutil.copy(p, stage)\n"
+            "    (stage / 'dataset-metadata.json').write_text(json.dumps(\n"
+            "        {'title': 'jepa-thesis-weights', 'id': SLUG,\n"
+            "         'licenses': [{'name': 'CC0-1.0'}]}, indent=2))\n"
+            "    exists = subprocess.run(['kaggle','datasets','status',SLUG],\n"
+            "                            capture_output=True).returncode == 0\n"
+            "    cmd = (['kaggle','datasets','version','-p',str(stage),'-m',\n"
+            f"            'add {method}','--dir-mode','zip']\n"
+            "           if exists else\n"
+            "           ['kaggle','datasets','create','-p',str(stage),'--dir-mode','zip','--private'])\n"
+            "    r = subprocess.run(cmd, capture_output=True, text=True)\n"
+            "    print(r.stdout or r.stderr)\n"
+            "    print('contents:', sorted(p.name for p in stage.glob('*.pt')))\n"
+        ),
+    ]
+    if embed:
+        cells[4:4] = embed_cells()
+    datasets = [
+        f"{user}/hyperkvasir-unlabeled-256",
+        f"{user}/jepa-thesis-ckpt",
+        # Mounted so the publish cell can carry over encoders from earlier methods;
+        # a new dataset version replaces its whole contents otherwise.
+        f"{user}/jepa-thesis-weights",
+    ]
+    return slug, nb(cells), metadata(user, slug, True, datasets, True)
+
+
+def build_segment(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
+    cells = [
+        md(
+            "# Segmentation fine-tuning on Kvasir-SEG\n\n"
+            "SegFormer all-MLP decoder on a ViT simple feature pyramid, 352px, 100 epochs.\n"
+            "Five encoders x five seeds = 25 runs, ~4 GPU-hours total.\n\n"
+            "Every arm uses the **identical** decoder, recipe, splits and seeds — only the "
+            "encoder weights differ. Test is scored exactly once, on the best-val checkpoint."
+        ),
+        *setup_cells(repo_url, branch, gpu=True),
+        code(
+            "# Pull the four exported encoders published by the pretraining notebooks.\n"
+            "import shutil, glob, pathlib\n"
+            "pathlib.Path('/kaggle/working/weights').mkdir(parents=True, exist_ok=True)\n"
+            f"for p in glob.glob('/kaggle/input/jepa-thesis-weights/*.pt'):\n"
+            "    shutil.copy(p, '/kaggle/working/weights/')\n"
+            "print(os.listdir('/kaggle/working/weights'))\n"
+        ),
+        code(
+            "ENCODERS = ['ijepa', 'mae', 'simclr', 'mocov3', 'random']\n"
+            "SEEDS = [0, 1, 2, 3, 4]\n"
+            "for enc in ENCODERS:\n"
+            "    for seed in SEEDS:\n"
+            "        sh(f'python -m src.engine.segment --encoder {enc} --seed {seed}', check=False)\n"
+        ),
+        md("## Ablations: low-label regime and decoder swap"),
+        code(
+            "for enc in ENCODERS:\n"
+            "    for lf in [0.1, 0.25, 0.5]:\n"
+            "        for seed in [0, 1, 2]:\n"
+            "            sh(f'python -m src.engine.segment --encoder {enc} "
+            "--label-fraction {lf} --seed {seed}', check=False)\n"
+        ),
+        code(
+            "for enc in ENCODERS:\n"
+            "    sh(f'python -m src.engine.segment --encoder {enc} --decoder unet --seed 0', check=False)\n"
+        ),
+        code(
+            "# Comparability table against published Kvasir-SEG numbers.\n"
+            "for enc in ENCODERS:\n"
+            "    sh(f'python -m src.engine.segment --encoder {enc} --split 880_120 --seed 0', check=False)\n"
+        ),
+    ]
+    if embed:
+        cells[3:3] = embed_cells()
+    datasets = ["debeshjha1/kvasirseg", f"{user}/jepa-thesis-weights"]
+    return "segment", nb(cells), metadata(user, "segment", True, datasets, True)
+
+
+def build_analysis(user: str, repo_url: str, branch: str, embed: bool) -> tuple[str, dict, dict]:
+    cells = [
+        md(
+            "# Analysis: probe, statistics, tables and figures\n\n"
+            "Everything here reads the JSON/JSONL artefacts written during training, so it "
+            "needs **no GPU** (except the frozen-feature probe, which is cheap). You can run "
+            "the same commands on your laptop to iterate on figures."
+        ),
+        *setup_cells(repo_url, branch, gpu=True),
+        code(
+            "# k-NN + linear probe on frozen features. The cheapest signal about\n"
+            "# representation quality — run it before trusting any segmentation number.\n"
+            "sh('python -m src.eval.probe --save-embeddings', check=False)\n"
+        ),
+        code("sh('python -m src.eval.stats')\n"),
+        code("sh('python -m src.eval.tables')\n"),
+        code("sh('python -m src.viz.make_all --out /kaggle/working/figures')\n"),
+        code(
+            "from IPython.display import Image as IPyImage, display, Markdown\n"
+            "import glob\n"
+            "for f in sorted(glob.glob('/kaggle/working/figures/*.png')):\n"
+            "    display(Markdown(f'### {os.path.basename(f)}'))\n"
+            "    display(IPyImage(filename=f))\n"
+        ),
+        code(
+            "display(Markdown(open('/kaggle/working/results/tables/all_tables.md').read()))\n"
+        ),
+    ]
+    if embed:
+        cells[3:3] = embed_cells()
+    datasets = [
+        "debeshjha1/kvasirseg",
+        f"{user}/jepa-thesis-weights",
+        f"{user}/hyperkvasir-labeled-256",
+    ]
+    return "analysis", nb(cells), metadata(user, "analysis", True, datasets, False)
+
+
 def main() -> None:
-    nb = build()
-    NOTEBOOK.write_text(json.dumps(nb, indent=1) + "\n")
-    print(f"wrote {NOTEBOOK}  ({len(nb['cells'])} cells)")
+    ap = argparse.ArgumentParser(description="Generate Kaggle notebooks")
+    ap.add_argument("--user", default="morsalin101")
+    ap.add_argument("--repo", default="https://github.com/morsalin101/jepa-thesis.git")
+    ap.add_argument("--branch", default="main")
+    ap.add_argument("--embed", action="store_true", help="inline all source as %%writefile cells")
+    args = ap.parse_args()
+
+    builders = [
+        build_data_prep(args.user, args.repo, args.branch, args.embed),
+        *[
+            build_pretrain(args.user, args.repo, args.branch, m, args.embed)
+            for m in ("ijepa", "mae", "simclr", "mocov3")
+        ],
+        build_segment(args.user, args.repo, args.branch, args.embed),
+        build_analysis(args.user, args.repo, args.branch, args.embed),
+    ]
+
+    for slug, notebook, meta in builders:
+        d = NB_DIR / slug
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{slug}.ipynb").write_text(json.dumps(notebook, indent=1) + "\n")
+        (d / "kernel-metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+        print(f"wrote {d}/  ({len(notebook['cells'])} cells)")
+
+    print(
+        "\nPush one with:  kaggle kernels push -p notebooks/<slug>\n"
+        "Order: data-prep -> pretrain-* -> segment -> analysis"
+    )
 
 
 if __name__ == "__main__":

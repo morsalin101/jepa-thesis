@@ -1,0 +1,39 @@
+# Segmentation fine-tuning on Kvasir-SEG.
+#
+# IMPORTANT: this file is identical for every encoder arm. Hyperparameters were chosen
+# once, on the validation split, using the random-init encoder, and then frozen. Never
+# re-tune per encoder — that would make the comparison meaningless.
+encoder: ijepa            # ijepa | mae | simclr | mocov3 | random  (set per run)
+decoder: segformer        # segformer (primary) | unet (ablation)
+
+model:
+  arch: vit_small
+  patch_size: 16
+  img_size: 352           # polyp-literature standard (PraNet, Polyp-PVT);
+                          # 352/16 = 22 -> a clean 484-token grid
+  drop_path_rate: 0.1
+
+# 0-indexed encoder blocks {3, 6, 9, 12} -> simple feature pyramid at strides {4,8,16,32}
+fpn_layers: [2, 5, 8, 11]
+decoder_embed_dim: 256
+
+epochs: 100
+batch_size: 16
+enc_lr: 1.0e-4
+dec_lr: 1.0e-3
+layer_decay: 0.75         # earlier blocks keep generic structure, later blocks adapt
+weight_decay: 0.05
+warmup_epochs: 5
+grad_clip: 1.0
+early_stop_patience: 20
+
+bce_weight: 0.5
+dice_weight: 0.5
+
+label_fraction: 1.0       # low-label ablation: 0.1 / 0.25 / 0.5 / 1.0
+split: "800_100_100"      # primary; "880_120" for the literature-comparability table
+pretrained_ckpt: ""       # blank -> auto-resolve outputs/weights/<encoder>_<arch>_*.pt
+
+runtime:
+  seed: 0                 # 5 seeds (0-4) per encoder for the main table
+  num_workers: 3

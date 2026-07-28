@@ -1,0 +1,19 @@
+{
+  "id": "morsalin101/pretrain-mae",
+  "title": "pretrain-mae",
+  "code_file": "pretrain-mae.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "morsalin101/hyperkvasir-unlabeled-256",
+    "morsalin101/jepa-thesis-ckpt",
+    "morsalin101/jepa-thesis-weights"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "morsalin101/pretrain-mae"
+  ]
+}

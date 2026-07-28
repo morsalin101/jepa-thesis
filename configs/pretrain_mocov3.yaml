@@ -1,0 +1,54 @@
+# MoCo v3 pretraining. The closest "fair" contrastive comparison for I-JEPA, since it
+# also carries an EMA target encoder — so a difference between the two is attributable
+# to the objective rather than to the presence of a momentum branch.
+#
+# Most expensive method in the study: 2 full views with gradients through the query
+# encoder plus 2 more without through the momentum encoder, and a symmetrised loss.
+method: mocov3
+
+model:
+  arch: vit_small
+  patch_size: 16
+  img_size: 224
+  drop_path_rate: 0.0
+
+optim:
+  global_batch: 512
+  accum_steps: 1           # see pretrain_simclr.yaml
+  epochs: 100
+  warmup_epochs: 10
+  start_lr: 1.0e-5
+  ref_lr: 3.0e-4
+  final_lr: 1.0e-6
+  weight_decay: 0.1
+  final_weight_decay: 0.1
+  exclude_bias_and_norm_from_wd: true
+  ipe_scale: 1.0
+  grad_clip: 3.0
+
+contrastive:
+  proj_hidden_dim: 2048    # 4096 in the paper for ViT-B; 2048 is the ratio-faithful
+                           # scaling to a 384-d encoder and saves ~330 MB of checkpoint
+  proj_out_dim: 256
+  proj_num_layers: 3
+  pred_hidden_dim: 2048
+  temperature: 0.2
+  moco_momentum: [0.99, 1.0]
+  freeze_patch_embed: true # the paper's own fix for ViT training collapse
+  symmetric_loss: true
+
+aug:
+  crop_scale: [0.2, 1.0]
+  horizontal_flip: true
+  color_jitter_strength: 0.5
+  color_distortion: true
+  gaussian_blur: true
+  solarize: true           # MoCo v3 uses BYOL-style asymmetric solarization
+  two_views: true
+
+runtime:
+  seed: 0
+  num_workers: 3
+  session_guard_hours: 7.5
+  ckpt_push_minutes: 45
+  ckpt_dataset_slug: ""

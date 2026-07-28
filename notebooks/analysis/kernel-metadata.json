@@ -1,0 +1,17 @@
+{
+  "id": "morsalin101/analysis",
+  "title": "analysis",
+  "code_file": "analysis.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "debeshjha1/kvasirseg",
+    "morsalin101/jepa-thesis-weights",
+    "morsalin101/hyperkvasir-labeled-256"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

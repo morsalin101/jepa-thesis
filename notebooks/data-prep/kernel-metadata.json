@@ -1,0 +1,15 @@
+{
+  "id": "morsalin101/data-prep",
+  "title": "data-prep",
+  "code_file": "data-prep.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "debeshjha1/kvasirseg"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

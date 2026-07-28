@@ -1,0 +1,18 @@
+{
+  "id": "morsalin101/segment",
+  "title": "segment",
+  "code_file": "segment.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "debeshjha1/kvasirseg",
+    "morsalin101/jepa-thesis-weights"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [
+    "morsalin101/segment"
+  ]
+}
