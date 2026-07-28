@@ -211,11 +211,36 @@ def publish(out_dir: Path, slug: str, title: str | None = None) -> None:
         else ["kaggle", "datasets", "create", "-p", str(out_dir), "--dir-mode", "zip"]
     )
     print(f"[build] {'versioning' if exists else 'creating'} {slug} (upload takes a while)")
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    out = (r.stdout or "") + (r.stderr or "")
-    print(out)
-    if r.returncode != 0 or "error" in out.lower():
-        raise RuntimeError(f"kaggle datasets command failed:\n{out.strip()}")
+    # Stream the CLI's output instead of capturing it, and close stdin. Capturing made a
+    # hung upload look identical to a slow one; and if the CLI ever prompts, stdin is not
+    # a TTY inside a kernel, so it would block forever waiting for input that cannot come.
+    print(f"[build] $ {' '.join(cmd)}", flush=True)
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    lines: list[str] = []
+    for line in proc.stdout:  # type: ignore[union-attr]
+        print(line, end="", flush=True)
+        lines.append(line)
+    try:
+        rc = proc.wait(timeout=1800)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise RuntimeError(
+            f"`kaggle datasets {'version' if exists else 'create'}` still running after "
+            "30 minutes. Upload it manually instead:\n"
+            f"  kaggle datasets create -p {out_dir} --dir-mode zip"
+        ) from None
+
+    out = "".join(lines)
+    if rc != 0 or "error" in out.lower():
+        raise RuntimeError(f"kaggle datasets command failed (exit {rc}):\n{out.strip()}")
 
 
 def main() -> None:
