@@ -27,6 +27,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NB_DIR = ROOT / "notebooks"
 
+# Where the notebooks clone the repo on Kaggle. Baked into the %%writefile paths so
+# those cells do not depend on the current working directory.
+WORKDIR = "/kaggle/working/jepa-thesis"
+
 SRC_FILES = [
     "src/__init__.py",
     "src/config.py",
@@ -88,7 +92,7 @@ def setup_cells(repo_url: str, branch: str, gpu: bool) -> list[dict]:
         code(
             f'REPO_URL = "{repo_url}"\n'
             f'BRANCH = "{branch}"\n'
-            'WORKDIR = "/kaggle/working/jepa-thesis"\n'
+            f'WORKDIR = "{WORKDIR}"\n'
         ),
         code(
             "import os, subprocess, sys\n"
@@ -172,7 +176,11 @@ def embed_cells() -> list[dict]:
         if not p.is_file():
             continue
         body = p.read_text()
-        src = f"%%writefile {rel}\n{body}"
+        # Absolute path, not relative: %%writefile resolves against os.getcwd(), and a
+        # kernel restart or running a cell out of order silently resets that to
+        # /kaggle/working, which made every one of these cells fail with a
+        # FileNotFoundError that pointed at the file rather than at the real cause.
+        src = f"%%writefile {WORKDIR}/{rel}\n{body}"
         out.append(code(src if src.endswith("\n") else src + "\n"))
     return out
 
