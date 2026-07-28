@@ -158,6 +158,21 @@ def _count_images(d: Path, recursive: bool = False) -> int:
     return n
 
 
+def _has_images(d: Path) -> bool:
+    """True if `d` contains images at any depth, short-circuiting on the first hit.
+
+    Directly-nested counting is not enough: class-labelled datasets keep their images
+    in per-class leaf folders, so the root of such a tree has none of its own.
+    """
+    try:
+        for p in d.rglob("*"):
+            if p.suffix.lower() in IMAGE_EXTS:
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def resolve_dataset_dir(
     kind: str,
     override: str | os.PathLike[str] | None = None,
@@ -197,7 +212,32 @@ def resolve_dataset_dir(
                 print(f"[data] {kind}: using {c}")
                 return c
 
-    # Fallback: recursive scan.
+    # Kaggle has changed how it nests mounts over time — it used to be
+    # /kaggle/input/<slug>/, and can now be /kaggle/input/datasets/<owner>/<slug>/.
+    # So rather than assuming a depth, look for a directory whose *name* matches the
+    # leaf of any candidate, anywhere in the tree. This is checked before the
+    # "most images wins" heuristic because that heuristic picks a leaf class folder
+    # for class-nested datasets, which is exactly the wrong answer.
+    wanted = {Path(rel).name for rel in candidates}
+
+    def name_ok(d: Path) -> bool:
+        if required_subdirs and not all((d / s).is_dir() for s in required_subdirs):
+            return False
+        # Images at ANY depth: a class-nested tree has none in its own root.
+        return bool(required_subdirs) or _has_images(d)
+
+    for root in roots:
+        if not root.exists():
+            continue
+        by_name = [
+            d for d in root.rglob("*") if d.is_dir() and d.name in wanted and name_ok(d)
+        ]
+        if by_name:
+            best = sorted(by_name, key=lambda p: (len(p.parts), str(p)))[0]
+            print(f"[data] {kind}: using {best} (matched by directory name)")
+            return best
+
+    # Last resort: the directory holding the most images.
     for root in roots:
         if not root.exists():
             continue
