@@ -21,9 +21,20 @@ from pathlib import Path
 
 
 def dataset_exists(slug: str) -> bool:
-    return subprocess.run(
-        ["kaggle", "datasets", "status", slug], capture_output=True
-    ).returncode == 0
+    """True if the dataset already exists on Kaggle.
+
+    `kaggle datasets status` exits 0 even when the API returns 403/404, so the return
+    code is useless here — the answer is in stdout ("ready" vs a "... Client Error"
+    line). Getting this wrong the other way would make `create` be skipped and every
+    later push fail with a missing-dataset error.
+    """
+    r = subprocess.run(
+        ["kaggle", "datasets", "status", slug], capture_output=True, text=True
+    )
+    out = (r.stdout or "") + (r.stderr or "")
+    if "error" in out.lower() or "not found" in out.lower():
+        return False
+    return bool(out.strip())
 
 
 def create(slug: str, title: str, note: str) -> None:
@@ -40,16 +51,19 @@ def create(slug: str, title: str, note: str) -> None:
             )
         )
         print(f"[setup] creating {slug} ...")
+        # No --private flag: datasets are private by default in the Kaggle CLI, and
+        # --public is the opt-in. Passing --private is an error on 1.7.x.
         r = subprocess.run(
-            ["kaggle", "datasets", "create", "-p", str(d), "--dir-mode", "zip", "--private"],
+            ["kaggle", "datasets", "create", "-p", str(d), "--dir-mode", "zip"],
             capture_output=True,
             text=True,
         )
-        print("  " + (r.stdout or r.stderr).strip())
-        if r.returncode != 0:
+        out = (r.stdout or "") + (r.stderr or "")
+        print("  " + out.strip().splitlines()[-1] if out.strip() else "  (no output)")
+        if r.returncode != 0 or "error" in out.lower():
             raise SystemExit(
-                f"failed to create {slug}. Check that `kaggle datasets list -m` works "
-                "(i.e. your API token is valid and not expired)."
+                f"failed to create {slug}.\n{out.strip()}\n"
+                "Check that `kaggle datasets list --mine` works (valid, unexpired token)."
             )
     finally:
         shutil.rmtree(d, ignore_errors=True)

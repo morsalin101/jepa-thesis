@@ -119,6 +119,10 @@ class CheckpointPusher:
             "-m", message[:500],
             "--dir-mode", "zip",
             "--quiet",
+            # A 100-epoch run pushes ~10 times at ~400 MB each. Without this, the dead
+            # versions pile up against the account's storage quota; only the latest is
+            # ever read, so keeping the history buys nothing.
+            "--delete-old-versions",
         ]
         try:
             r = _run(cmd)
@@ -130,7 +134,7 @@ class CheckpointPusher:
             if err and "does not exist" in err[-1].lower():
                 print(
                     f"[kaggle_io] dataset {self.slug} does not exist yet. Create it once "
-                    f"with:  kaggle datasets create -p {self.dir} --dir-mode zip --private"
+                    f"with:  kaggle datasets create -p {self.dir} --dir-mode zip"
                 )
             else:
                 print(f"[kaggle_io] push failed: {err[-1] if err else r.returncode}")

@@ -128,20 +128,25 @@ def publish(out_dir: Path, slug: str, title: str | None = None) -> None:
     }
     (out_dir / "dataset-metadata.json").write_text(json.dumps(meta, indent=2))
 
+    # `kaggle datasets status` exits 0 even on a 403/404, so read stdout, not the code.
     probe = subprocess.run(
         ["kaggle", "datasets", "status", slug], capture_output=True, text=True
     )
-    exists = probe.returncode == 0
+    probe_out = (probe.stdout or "") + (probe.stderr or "")
+    exists = bool(probe_out.strip()) and "error" not in probe_out.lower()
+
+    # Datasets are private by default; --public is the opt-in. There is no --private.
     cmd = (
         ["kaggle", "datasets", "version", "-p", str(out_dir), "-m", "update", "--dir-mode", "zip"]
         if exists
-        else ["kaggle", "datasets", "create", "-p", str(out_dir), "--dir-mode", "zip", "--private"]
+        else ["kaggle", "datasets", "create", "-p", str(out_dir), "--dir-mode", "zip"]
     )
     print(f"[build] {'versioning' if exists else 'creating'} {slug} (upload takes a while)")
     r = subprocess.run(cmd, capture_output=True, text=True)
-    print(r.stdout or r.stderr)
-    if r.returncode != 0:
-        raise RuntimeError(f"kaggle datasets command failed: {r.stderr.strip()}")
+    out = (r.stdout or "") + (r.stderr or "")
+    print(out)
+    if r.returncode != 0 or "error" in out.lower():
+        raise RuntimeError(f"kaggle datasets command failed:\n{out.strip()}")
 
 
 def main() -> None:
