@@ -54,7 +54,7 @@ reference/ijepa/  read-only clone of the official repo (gitignored)
 Order matters: data prep → pretrain (×4) → segment → analysis.
 
 ```bash
-python scripts/build_notebook.py --user <kaggle-username>
+python3 scripts/build_notebook.py --user <kaggle-username>
 kaggle kernels push -p notebooks/data-prep        # CPU session — free
 kaggle kernels push -p notebooks/pretrain-ijepa   # GPU T4 x2
 # ... pretrain-mae, pretrain-simclr, pretrain-mocov3
@@ -65,11 +65,11 @@ kaggle kernels push -p notebooks/analysis
 Or run any stage directly:
 
 ```bash
-python -m src.engine.pretrain --method ijepa --ckpt-slug <user>/jepa-thesis-ckpt
-python -m src.engine.segment  --encoder ijepa --seed 0
-python -m src.eval.stats
-python -m src.eval.tables
-python -m src.viz.make_all
+python3 -m src.engine.pretrain --method ijepa --ckpt-slug <user>/jepa-thesis-ckpt
+python3 -m src.engine.segment  --encoder ijepa --seed 0
+python3 -m src.eval.stats
+python3 -m src.eval.tables
+python3 -m src.viz.make_all
 ```
 
 **Resuming.** A pretraining notebook that prints `N epochs remaining` has stopped at the

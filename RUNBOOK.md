@@ -25,7 +25,7 @@ state only lives in `/kaggle/working`, which is wiped when the session ends — 
 **c. Create the two datasets** (they must exist before the notebooks can reference them):
 
 ```bash
-python scripts/setup_kaggle_datasets.py --user morsalin101
+python3 scripts/setup_kaggle_datasets.py --user morsalin101
 ```
 
 **d. Push the code.** The notebooks `git clone` from GitHub, so nothing runs until this
@@ -40,7 +40,7 @@ git push origin main
 **e. Generate and push the notebooks:**
 
 ```bash
-python scripts/build_notebook.py --user morsalin101
+python3 scripts/build_notebook.py --user morsalin101
 for nb in data-prep pretrain-ijepa pretrain-mae pretrain-simclr pretrain-mocov3 segment analysis; do
   kaggle kernels push -p notebooks/$nb
 done
@@ -144,9 +144,9 @@ kaggle kernels output morsalin101/analysis -p ./outputs
 Figures and tables regenerate with **no GPU**, so iterate on them locally:
 
 ```bash
-python -m src.eval.stats
-python -m src.eval.tables
-python -m src.viz.make_all
+python3 -m src.eval.stats
+python3 -m src.eval.tables
+python3 -m src.viz.make_all
 ```
 
 ---

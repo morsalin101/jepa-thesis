@@ -138,13 +138,34 @@ def setup_cells(repo_url: str, branch: str, gpu: bool) -> list[dict]:
 
 
 def embed_cells() -> list[dict]:
+    dirs = sorted({str(Path(f).parent) for f in SRC_FILES if str(Path(f).parent) != "."})
     out = [
         md(
             "### Source files (editable)\n\n"
             "Each cell below writes one file. Edit a cell and re-run it to patch the code "
             "in this session without a git round-trip. Re-running the clone cell above "
-            "discards these edits."
-        )
+            "discards these edits.\n\n"
+            "Run the guard cell first — `%%writefile` writes relative to the working "
+            "directory and will not create missing folders, so it fails with "
+            "`FileNotFoundError` if the clone has not run or the kernel was restarted."
+        ),
+        code(
+            "# Guard for the %%writefile cells below. Safe to re-run at any time.\n"
+            "#   1. %%writefile resolves paths relative to os.getcwd(), and a kernel\n"
+            "#      restart resets that to /kaggle/working — so re-assert it.\n"
+            "#   2. %%writefile will NOT create parent directories; it raises\n"
+            "#      FileNotFoundError instead. So create them up front.\n"
+            "import os, pathlib\n"
+            "\n"
+            "if not os.path.isdir(WORKDIR):\n"
+            "    raise RuntimeError(\n"
+            "        f'{WORKDIR} does not exist — run the git clone cell above first.')\n"
+            "os.chdir(WORKDIR)\n"
+            f"for d in {dirs!r}:\n"
+            "    pathlib.Path(d).mkdir(parents=True, exist_ok=True)\n"
+            "print('cwd:', os.getcwd())\n"
+            "print('ready for the %%writefile cells')\n"
+        ),
     ]
     for rel in SRC_FILES:
         p = ROOT / rel
