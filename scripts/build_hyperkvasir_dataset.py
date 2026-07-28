@@ -188,8 +188,42 @@ def resize_dir(
     return written + skipped
 
 
+def _stage_for_upload(out_dir: Path) -> Path:
+    """Return a directory that *contains* `out_dir` as a subdirectory.
+
+    This is load-bearing. `--dir-mode zip` compresses each **subdirectory** of the upload
+    path into a single archive; it does nothing for loose files. Pointing the CLI at a
+    folder holding 3000 individual JPEGs therefore uploads 3000 files one HTTP request at
+    a time — about 40 minutes for a corpus that should take seconds. Nesting it one level
+    down turns the whole corpus into one zip.
+
+    Hard links are used so this costs no extra disk (matters for the full ~3 GB corpus
+    against a 20 GiB working quota).
+    """
+    stage = out_dir.parent / f"_upload_{out_dir.name}"
+    target = stage / out_dir.name
+    target.mkdir(parents=True, exist_ok=True)
+
+    linked = 0
+    for src in out_dir.rglob("*"):
+        if not src.is_file() or src.name == "dataset-metadata.json":
+            continue
+        dst = target / src.relative_to(out_dir)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            continue
+        try:
+            os.link(src, dst)
+        except OSError:
+            shutil.copy2(src, dst)
+        linked += 1
+    print(f"[build] staged {linked} files for upload under {stage}")
+    return stage
+
+
 def publish(out_dir: Path, slug: str, title: str | None = None) -> None:
     """Create or version a Kaggle Dataset from the resized corpus."""
+    out_dir = _stage_for_upload(out_dir)
     meta = {
         "title": title or slug.split("/")[-1],
         "id": slug,
