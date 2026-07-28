@@ -220,6 +220,12 @@ def resolve_dataset_dir(
     # for class-nested datasets, which is exactly the wrong answer.
     wanted = {Path(rel).name for rel in candidates}
 
+    def name_matches(name: str) -> bool:
+        # Prefix match, so a variant slug like `hyperkvasir-unlabeled-256-sub3000`
+        # still resolves. Without this it would fall through to the "most images wins"
+        # heuristic, which happens to work but picks the directory for the wrong reason.
+        return any(name == w or name.startswith(w + "-") for w in wanted)
+
     def name_ok(d: Path) -> bool:
         if required_subdirs and not all((d / s).is_dir() for s in required_subdirs):
             return False
@@ -230,7 +236,7 @@ def resolve_dataset_dir(
         if not root.exists():
             continue
         by_name = [
-            d for d in root.rglob("*") if d.is_dir() and d.name in wanted and name_ok(d)
+            d for d in root.rglob("*") if d.is_dir() and name_matches(d.name) and name_ok(d)
         ]
         if by_name:
             best = sorted(by_name, key=lambda p: (len(p.parts), str(p)))[0]
