@@ -3,6 +3,15 @@
 Run this in a Kaggle **CPU** notebook — CPU sessions do not consume the GPU quota, so
 this whole step is free.
 
+Two input paths:
+
+* `--source-dir` (**preferred on Kaggle**) reads an already-mounted HyperKvasir dataset
+  from `/kaggle/input`. No download, no TLS issues, and the mount does not count against
+  the 20 GiB working quota.
+* `--url` / default downloads the archive from datasets.simula.no. Note that host serves
+  an incomplete certificate chain, so curl fails with exit 60 ("unable to get local
+  issuer certificate") from Kaggle. Kept as a fallback for machines where it works.
+
 Why pre-resize at all: Kaggle gives 4 vCPUs. HyperKvasir's frames are frequently
 1280x1024, and decoding those at the ~400 views/s SimCLR needs is simply not possible on
 4 cores. You would run at roughly a third of GPU speed and burn quota producing nothing.
@@ -119,6 +128,55 @@ def stream_resize_zip(
     return written + skipped
 
 
+def resize_dir(
+    src_dir: Path,
+    out_dir: Path,
+    short_side: int = 256,
+    quality: int = 90,
+    workers: int = 4,
+    preserve_tree: bool = False,
+) -> int:
+    """Resize every image under `src_dir` into `out_dir`.
+
+    :param preserve_tree: keep the relative directory structure. Needed for the labelled
+        split, where the parent directory *is* the class label; the unlabeled split is
+        flat so it writes into one folder.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    srcs = sorted(p for p in src_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
+    if not srcs:
+        raise FileNotFoundError(f"no images found under {src_dir}")
+    print(f"[build] {len(srcs)} images under {src_dir}")
+
+    written = skipped = 0
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        batch: list[tuple[bytes, Path, int, int]] = []
+        for i, p in enumerate(srcs):
+            if preserve_tree:
+                dst = out_dir / p.relative_to(src_dir).with_suffix(".jpg")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                dst = out_dir / f"{p.stem}.jpg"
+            if dst.is_file():
+                skipped += 1
+                continue
+            batch.append((p.read_bytes(), dst, short_side, quality))
+
+            if len(batch) >= 256:
+                written += sum(pool.map(resize_one, batch))
+                batch.clear()
+                rate = (i + 1) / max(1e-6, time.time() - t0)
+                eta = (len(srcs) - i - 1) / max(1e-6, rate) / 60
+                print(f"[build] {i + 1}/{len(srcs)}  {rate:.0f} img/s  ETA {eta:.0f} min", flush=True)
+        if batch:
+            written += sum(pool.map(resize_one, batch))
+
+    size_gb = sum(p.stat().st_size for p in out_dir.rglob("*.jpg")) / 1e9
+    print(f"[build] wrote {written} (+{skipped} already present) -> {out_dir}  ({size_gb:.2f} GB)")
+    return written + skipped
+
+
 def publish(out_dir: Path, slug: str, title: str | None = None) -> None:
     """Create or version a Kaggle Dataset from the resized corpus."""
     meta = {
@@ -152,6 +210,12 @@ def publish(out_dir: Path, slug: str, title: str | None = None) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build the 256px HyperKvasir pretraining corpus")
     ap.add_argument("--split", default="unlabeled", choices=["unlabeled", "labeled"])
+    ap.add_argument(
+        "--source-dir",
+        default=None,
+        help="resize from an already-mounted dataset (e.g. /kaggle/input/...) instead "
+        "of downloading. Preferred on Kaggle.",
+    )
     ap.add_argument("--url", default=None)
     ap.add_argument("--zip", default=None, help="use an already-downloaded archive")
     ap.add_argument("--out", default=None)
@@ -166,17 +230,29 @@ def main() -> None:
         args.out or (Path("/kaggle/working") if on_kaggle() else Path("data"))
     ) / ("hk256" if args.split == "unlabeled" else "hk_labeled256")
 
-    if args.zip:
-        zip_path = Path(args.zip)
+    if args.source_dir:
+        # Preferred path: read a mounted Kaggle dataset. The labelled split keeps its
+        # directory tree because the parent folder carries the class label.
+        n = resize_dir(
+            Path(args.source_dir),
+            out_dir,
+            args.short_side,
+            args.quality,
+            args.workers,
+            preserve_tree=(args.split == "labeled"),
+        )
     else:
-        url = args.url or (UNLABELED_URL if args.split == "unlabeled" else LABELED_URL)
-        zip_path = download(url, scratch_dir() / Path(url).name)
+        if args.zip:
+            zip_path = Path(args.zip)
+        else:
+            url = args.url or (UNLABELED_URL if args.split == "unlabeled" else LABELED_URL)
+            zip_path = download(url, scratch_dir() / Path(url).name)
 
-    n = stream_resize_zip(zip_path, out_dir, args.short_side, args.quality, args.workers)
+        n = stream_resize_zip(zip_path, out_dir, args.short_side, args.quality, args.workers)
 
-    if not args.keep_zip and not args.zip and zip_path.is_file():
-        zip_path.unlink()
-        print(f"[build] removed {zip_path} to free scratch space")
+        if not args.keep_zip and not args.zip and zip_path.is_file():
+            zip_path.unlink()
+            print(f"[build] removed {zip_path} to free scratch space")
 
     print(f"[build] corpus ready: {n} images in {out_dir}")
     if args.publish:

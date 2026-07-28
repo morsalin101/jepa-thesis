@@ -8,7 +8,9 @@
   "enable_gpu": false,
   "enable_internet": true,
   "dataset_sources": [
-    "debeshjha1/kvasirseg"
+    "debeshjha1/kvasirseg",
+    "faisalmahmud69/hyper-kvasir-unlabeled-images",
+    "faisalmahmud69/hyper-kvasir-labeled-images"
   ],
   "competition_sources": [],
   "kernel_sources": []

@@ -254,21 +254,51 @@ def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple
     )
     body = [
         code(
-            "# ~30-60 min. Publishes morsalin101/hyperkvasir-unlabeled-256.\n"
-            "# Requires KAGGLE_USERNAME / KAGGLE_KEY under Add-ons -> Secrets.\n"
+            "# Credentials for publishing the resized corpora as Kaggle Datasets.\n"
+            "# Labels must be exactly KAGGLE_USERNAME and KAGGLE_KEY (Add-ons -> Secrets).\n"
             "from kaggle_secrets import UserSecretsClient\n"
             "s = UserSecretsClient()\n"
             "os.environ['KAGGLE_USERNAME'] = s.get_secret('KAGGLE_USERNAME')\n"
             "os.environ['KAGGLE_KEY'] = s.get_secret('KAGGLE_KEY')\n"
+            "print('credentials loaded for', os.environ['KAGGLE_USERNAME'])\n"
+        ),
+        code(
+            "# Locate the mounted HyperKvasir source. Reading the attached dataset beats\n"
+            "# downloading from datasets.simula.no, whose TLS chain is missing an\n"
+            "# intermediate certificate (curl exit 60) — and a mount costs no disk quota.\n"
+            "import glob\n"
             "\n"
-            f"sh('python scripts/build_hyperkvasir_dataset.py --publish {user}/hyperkvasir-unlabeled-256')\n"
+            "def find_source(*patterns):\n"
+            "    for pat in patterns:\n"
+            "        hits = sorted(glob.glob(pat))\n"
+            "        if hits:\n"
+            "            return hits[0]\n"
+            "    raise FileNotFoundError(\n"
+            "        f'no HyperKvasir source found for {patterns}. Attach '\n"
+            "        'faisalmahmud69/hyper-kvasir-unlabeled-images and '\n"
+            "        'faisalmahmud69/hyper-kvasir-labeled-images via + Add Input.')\n"
+            "\n"
+            "UNLABELED_SRC = find_source('/kaggle/input/*/unlabeled-images/images',\n"
+            "                           '/kaggle/input/*/unlabeled-images',\n"
+            "                           '/kaggle/input/*/*/unlabeled-images/images')\n"
+            "LABELED_SRC = find_source('/kaggle/input/*/labeled-images',\n"
+            "                          '/kaggle/input/*/*/labeled-images')\n"
+            "print('unlabeled:', UNLABELED_SRC, len(os.listdir(UNLABELED_SRC)), 'entries')\n"
+            "print('labeled  :', LABELED_SRC)\n"
+        ),
+        code(
+            "# ~99,417 images -> 256px short side, ~3 GB. 20-40 min on 4 vCPUs.\n"
+            "# The resize is what makes the dataloader keep up with the GPU later:\n"
+            "# decoding 1280x1024 JPEGs at 400 views/s is not possible on 4 cores.\n"
+            "sh(f'python scripts/build_hyperkvasir_dataset.py --source-dir {UNLABELED_SRC} "
+            f"--publish {user}/hyperkvasir-unlabeled-256')\n"
         ),
         code(
             "# The labelled split (10,662 images, 23 classes) — ~400 MB, a few minutes.\n"
             "# Never trained on; used only by the k-NN / linear probe in the analysis\n"
             "# notebook, which is the cheapest check that pretraining actually worked.\n"
-            f"sh('python scripts/build_hyperkvasir_dataset.py --split labeled "
-            f"--publish {user}/hyperkvasir-labeled-256')\n"
+            "sh(f'python scripts/build_hyperkvasir_dataset.py --split labeled "
+            f"--source-dir {{LABELED_SRC}} --publish {user}/hyperkvasir-labeled-256')\n"
         ),
         code(
             "# Point at the corpus we just built in /kaggle/working — the published dataset\n"
@@ -305,7 +335,14 @@ def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple
         ),
     ]
     cells = assemble(intro, repo_url, branch, False, embed, body)
-    return "data-prep", nb(cells), metadata(user, "data-prep", False, ["debeshjha1/kvasirseg"], False)
+    datasets = [
+        "debeshjha1/kvasirseg",
+        # Mounted rather than downloaded: datasets.simula.no serves an incomplete TLS
+        # chain, so curl fails from Kaggle. These mirrors carry the same images.
+        "faisalmahmud69/hyper-kvasir-unlabeled-images",
+        "faisalmahmud69/hyper-kvasir-labeled-images",
+    ]
+    return "data-prep", nb(cells), metadata(user, "data-prep", False, datasets, False)
 
 
 def build_pretrain(
