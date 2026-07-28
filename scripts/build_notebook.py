@@ -216,7 +216,13 @@ def build_data_prep(user: str, repo_url: str, branch: str, embed: bool) -> tuple
             f"sh('python scripts/build_hyperkvasir_dataset.py --split labeled "
             f"--publish {user}/hyperkvasir-labeled-256')\n"
         ),
-        code("sh('python scripts/dedup_phash.py --threshold 6')\n"),
+        code(
+            "# Point at the corpus we just built in /kaggle/working — the published dataset\n"
+            "# only appears under /kaggle/input on a *later* session, so auto-resolution\n"
+            "# would not find it yet in this one.\n"
+            "sh('python scripts/dedup_phash.py --threshold 6 "
+            "--pretrain-root /kaggle/working/hk256')\n"
+        ),
         code("sh('python -m src.data.splits')\n"),
         code(
             "print(open('splits/dedup_report.json').read())\n"
