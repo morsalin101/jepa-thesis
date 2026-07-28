@@ -70,6 +70,13 @@ SRC_FILES = [
     "src/viz/style.py",
     "src/viz/figures.py",
     "src/viz/make_all.py",
+    # The configs come last on purpose: they are the most likely thing to tweak in the
+    # Kaggle UI (epochs, batch size, LR), so they sit right next to the job cells.
+    "configs/pretrain_ijepa.yaml",
+    "configs/pretrain_mae.yaml",
+    "configs/pretrain_simclr.yaml",
+    "configs/pretrain_mocov3.yaml",
+    "configs/segment_segformer.yaml",
 ]
 
 
@@ -143,6 +150,9 @@ def setup_cells(repo_url: str, branch: str, gpu: bool) -> list[dict]:
 
 def embed_cells() -> list[dict]:
     dirs = sorted({str(Path(f).parent) for f in SRC_FILES if str(Path(f).parent) != "."})
+    # `%%writefile` raises "cell body is empty" on a blank file, which aborts Run All at
+    # the very first cell. Empty package markers get created by the guard cell instead.
+    empty = [f for f in SRC_FILES if (ROOT / f).is_file() and not (ROOT / f).read_text().strip()]
     out = [
         md(
             "### Source files (editable)\n\n"
@@ -159,6 +169,8 @@ def embed_cells() -> list[dict]:
             "#      restart resets that to /kaggle/working — so re-assert it.\n"
             "#   2. %%writefile will NOT create parent directories; it raises\n"
             "#      FileNotFoundError instead. So create them up front.\n"
+            "#   3. Empty __init__.py files cannot be written by %%writefile at all\n"
+            "#      ('cell body is empty'), so they are created here.\n"
             "import os, pathlib\n"
             "\n"
             "if not os.path.isdir(WORKDIR):\n"
@@ -166,14 +178,16 @@ def embed_cells() -> list[dict]:
             "        f'{WORKDIR} does not exist — run the git clone cell above first.')\n"
             "os.chdir(WORKDIR)\n"
             f"for d in {dirs!r}:\n"
-            "    pathlib.Path(d).mkdir(parents=True, exist_ok=True)\n"
+            "    pathlib.Path(WORKDIR, d).mkdir(parents=True, exist_ok=True)\n"
+            f"for f in {empty!r}:\n"
+            "    pathlib.Path(WORKDIR, f).touch(exist_ok=True)\n"
             "print('cwd:', os.getcwd())\n"
             "print('ready for the %%writefile cells')\n"
         ),
     ]
     for rel in SRC_FILES:
         p = ROOT / rel
-        if not p.is_file():
+        if not p.is_file() or rel in empty:
             continue
         body = p.read_text()
         # Absolute path, not relative: %%writefile resolves against os.getcwd(), and a

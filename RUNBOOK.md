@@ -46,7 +46,7 @@ for nb in data-prep pretrain-ijepa pretrain-mae pretrain-simclr pretrain-mocov3 
 done
 ```
 
-Each notebook embeds all 38 source files as `%%writefile` cells, so once you open it on
+Each notebook embeds all 43 source and config files as `%%writefile` cells, so once you open it on
 Kaggle you can read and edit every line in the UI and step through cell by cell. Cell
 order is: clone → install → **all source files** → the job. Edit a source cell and re-run
 it to patch that file for the session; re-run the clone cell to go back to what is in git.
