@@ -427,6 +427,12 @@ class RuntimeCfg:
 @dataclass
 class PretrainCfg:
     method: str = "ijepa"  # ijepa | mae | simclr | mocov3
+    # Cap the pretraining corpus. 0 = use everything. Intended for fast end-to-end
+    # validation on a few thousand images before committing GPU-hours to the real run.
+    # It is a top-level field (not runtime) on purpose: it changes the experiment, so it
+    # belongs in the config hash and in run_id — a subset run can then never resume from,
+    # or be mistaken for, the full run.
+    max_images: int = 0
     model: ModelCfg = field(default_factory=ModelCfg)
     optim: OptimCfg = field(default_factory=OptimCfg)
     mask: MaskCfg = field(default_factory=MaskCfg)
@@ -437,9 +443,20 @@ class PretrainCfg:
     runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
 
     @property
+    def is_subset_run(self) -> bool:
+        return self.max_images > 0
+
+    @property
     def run_id(self) -> str:
         m, o = self.model, self.optim
-        return f"{self.method}_{m.arch}_p{m.patch_size}_{m.img_size}_ep{o.epochs}_bs{o.global_batch}_s{self.runtime.seed}"
+        # The n<N> tag keeps a quick subset run in its own checkpoint namespace and makes
+        # it obvious in every filename, log line and metrics record that it is not the
+        # full-corpus result.
+        subset = f"_n{self.max_images}" if self.is_subset_run else ""
+        return (
+            f"{self.method}_{m.arch}_p{m.patch_size}_{m.img_size}"
+            f"_ep{o.epochs}_bs{o.global_batch}{subset}_s{self.runtime.seed}"
+        )
 
 
 @dataclass

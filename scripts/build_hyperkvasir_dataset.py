@@ -135,18 +135,29 @@ def resize_dir(
     quality: int = 90,
     workers: int = 4,
     preserve_tree: bool = False,
+    limit: int = 0,
 ) -> int:
     """Resize every image under `src_dir` into `out_dir`.
 
     :param preserve_tree: keep the relative directory structure. Needed for the labelled
         split, where the parent directory *is* the class label; the unlabeled split is
         flat so it writes into one folder.
+    :param limit: keep only this many images (0 = all), for a fast pipeline check.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     srcs = sorted(p for p in src_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
     if not srcs:
         raise FileNotFoundError(f"no images found under {src_dir}")
     print(f"[build] {len(srcs)} images under {src_dir}")
+
+    if limit and limit < len(srcs):
+        import random
+
+        srcs = sorted(random.Random(0).sample(srcs, limit))
+        print(
+            f"[build] *** LIMIT: keeping a random {limit} of them. For a quick pipeline "
+            "check only — rebuild without --limit for the real corpus. ***"
+        )
 
     written = skipped = 0
     t0 = time.time()
@@ -222,6 +233,12 @@ def main() -> None:
     ap.add_argument("--short-side", type=int, default=256)
     ap.add_argument("--quality", type=int, default=90)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="only process this many images (0 = all). For a quick pipeline check.",
+    )
     ap.add_argument("--publish", default=None, help="Kaggle dataset slug, e.g. user/hyperkvasir-unlabeled-256")
     ap.add_argument("--keep-zip", action="store_true")
     args = ap.parse_args()
@@ -240,6 +257,7 @@ def main() -> None:
             args.quality,
             args.workers,
             preserve_tree=(args.split == "labeled"),
+            limit=args.limit,
         )
     else:
         if args.zip:

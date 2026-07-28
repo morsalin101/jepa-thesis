@@ -91,6 +91,8 @@ def build_dataloader(cfg: PretrainCfg, per_gpu_batch: int, data_root: Path | Non
         transform=transform,
         exclude_file=exclude_file if exclude_file.is_file() else None,
         cache_dir=default_output_dir(),
+        max_images=cfg.max_images,
+        seed=cfg.runtime.seed,
     )
     if ddp.is_main():
         print(f"[data] {dataset.describe()}")
@@ -201,6 +203,12 @@ def pretrain(cfg: PretrainCfg, rank: int = 0, world_size: int = 1, data_root: Pa
 
     if ddp.is_main():
         print(f"[pretrain] {cfg.run_id}")
+        if cfg.is_subset_run:
+            print(
+                f"[pretrain] *** SUBSET RUN: capped at {cfg.max_images} images. "
+                "Pipeline validation only, not a thesis result. Drop --max-images "
+                "for the real run. ***"
+            )
         print(f"[pretrain] device={amp.name} sm_{amp.sm} autocast={amp.dtype} scaler={amp.use_scaler}")
         print(
             f"[pretrain] global_batch={o.global_batch} = per_gpu {per_gpu} "
@@ -208,6 +216,18 @@ def pretrain(cfg: PretrainCfg, rank: int = 0, world_size: int = 1, data_root: Pa
         )
 
     dataset, loader, sampler, collate = build_dataloader(cfg, per_gpu, data_root)
+
+    # A small corpus and a full corpus produce identical-looking logs otherwise. The
+    # `--max-images` flag is recorded in run_id, but a corpus that is *itself* small
+    # (e.g. a subset dataset was mounted) is invisible — so say it out loud, and record
+    # the number in every metrics row and the checkpoint.
+    corpus_size = len(dataset)
+    if ddp.is_main() and corpus_size < 20_000:
+        print(
+            f"[pretrain] *** WARNING: corpus is only {corpus_size} images. HyperKvasir "
+            "unlabeled has ~99,417. Either a subset dataset is mounted or --max-images "
+            "is set. Fine for a pipeline check; NOT a thesis result. ***"
+        )
     gpu_aug = build_gpu_augment(cfg, device)
 
     model = build_pretrain_model(cfg).to(device)
@@ -317,6 +337,7 @@ def pretrain(cfg: PretrainCfg, rank: int = 0, world_size: int = 1, data_root: Pa
             loss_history=loss_history,
             wall_clock_s=wall_clock + (time.time() - session_start),
             sessions=sessions + [session_record(session_start, epoch - start_epoch, amp.name)],
+            extra={"corpus_size": corpus_size},
         )
         save_checkpoint(ck, ckpt_path)
         if push and pusher.enabled:
@@ -428,6 +449,7 @@ def pretrain(cfg: PretrainCfg, rank: int = 0, world_size: int = 1, data_root: Pa
                     ),
                     "global_step": global_step,
                     "samples_seen": global_step * o.global_batch,
+                    "corpus_size": corpus_size,
                     "epoch_time_s": round(epoch_time, 1),
                     "accelerator": amp.name,
                     "world_size": world_size,
@@ -509,6 +531,13 @@ def main() -> None:
     ap.add_argument("--accum-steps", type=int, default=None)
     ap.add_argument("--lr", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument(
+        "--max-images",
+        type=int,
+        default=None,
+        help="cap the corpus for a quick pipeline check (e.g. 3000). Gets its own "
+        "run_id so it cannot collide with or be mistaken for the full run.",
+    )
     ap.add_argument("--img-size", type=int, default=None)
     ap.add_argument("--patch-size", type=int, default=None)
     ap.add_argument("--arch", default=None)
@@ -520,6 +549,8 @@ def main() -> None:
     args = ap.parse_args()
 
     overrides: dict = {"optim": {}, "model": {}, "runtime": {}}
+    if args.max_images is not None:
+        overrides["max_images"] = args.max_images
     if args.epochs is not None:
         overrides["optim"]["epochs"] = args.epochs
     if args.global_batch is not None:
