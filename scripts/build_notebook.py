@@ -463,20 +463,73 @@ def build_pretrain(
     )
     body = [
         code(
+            "# ---- run configuration -------------------------------------------------\n"
+            "EPOCHS = 100      # 100 = paper-faithful. 30 is a reasonable budget-cut.\n"
+            "MAX_IMAGES = 0    # 0 = whole corpus. Set e.g. 3000 for a quick pipeline check.\n"
+            "GUARD_HOURS = 7.5 # stop cleanly before Kaggle's session cap\n"
+            "# ------------------------------------------------------------------------\n"
+            "\n"
+            "# Cost at the full 99,417-image corpus, T4 x2:\n"
+            f"#   {method}: ~{ {'ijepa': 5.3, 'mae': 2.7, 'simclr': 9.5, 'mocov3': 12.8}[method] } min/epoch\n"
+            "# Whatever you pick, use the SAME budget for all four methods — that\n"
+            "# equality is what makes the comparison a comparison.\n"
+            "print(f'{EPOCHS} epochs, max_images={MAX_IMAGES or \"all\"}')\n"
+        ),
+        code(
             "from kaggle_secrets import UserSecretsClient\n"
             "s = UserSecretsClient()\n"
             "os.environ['KAGGLE_USERNAME'] = s.get_secret('KAGGLE_USERNAME')\n"
             "os.environ['KAGGLE_KEY'] = s.get_secret('KAGGLE_KEY')\n"
         ),
         code(
-            f"sh('python -m src.engine.pretrain --method {method} "
-            f"--ckpt-slug {user}/jepa-thesis-ckpt --guard-hours 7.5', check=False)\n"
+            "mi = f'--max-images {MAX_IMAGES}' if MAX_IMAGES else ''\n"
+            f"sh(f'python -m src.engine.pretrain --method {method} --epochs {{EPOCHS}} {{mi}} "
+            f"--ckpt-slug {user}/jepa-thesis-ckpt --guard-hours {{GUARD_HOURS}}', check=False)\n"
+        ),
+        code(
+            "# Loss curve and per-epoch table, read from the metrics written during\n"
+            "# training. Works whether the run finished or the guard stopped it early.\n"
+            "import json, glob\n"
+            "import matplotlib.pyplot as plt\n"
+            "\n"
+            "recs = [json.loads(l) for l in\n"
+            "        open('/kaggle/working/ckpt/metrics.jsonl')] \\\n"
+            "       if glob.glob('/kaggle/working/ckpt/metrics.jsonl') else []\n"
+            f"recs = [r for r in recs if r['method'] == '{method}']\n"
+            "\n"
+            "if not recs:\n"
+            "    print('no metrics yet — training has not completed an epoch')\n"
+            "else:\n"
+            "    print(f\"corpus: {recs[-1].get('corpus_size', '?')} images | \"\n"
+            "          f\"{recs[-1]['epoch']} epochs done | \"\n"
+            "          f\"{sum(r.get('epoch_time_s', 0) for r in recs)/3600:.2f} GPU-h\")\n"
+            "    print(f\"loss: {recs[0]['loss']:.4f} -> {recs[-1]['loss']:.4f}\")\n"
+            "    print()\n"
+            "    print(f\"{'epoch':>6} {'loss':>10} {'lr':>10} {'wd':>8} {'min/ep':>8}\")\n"
+            "    for r in recs[-15:]:\n"
+            "        print(f\"{r['epoch']:6d} {r['loss']:10.4f} {r['lr']:10.2e} \"\n"
+            "              f\"{r['wd']:8.3f} {r.get('epoch_time_s',0)/60:8.1f}\")\n"
+            "\n"
+            "    fig, ax = plt.subplots(1, 2, figsize=(10, 3.2))\n"
+            "    ax[0].plot([r['epoch'] for r in recs], [r['loss'] for r in recs])\n"
+            "    ax[0].set_xlabel('epoch'); ax[0].set_ylabel('loss'); ax[0].set_title('training loss')\n"
+            "    ax[0].grid(alpha=.3)\n"
+            "    ax[1].plot([r['epoch'] for r in recs], [r['lr'] for r in recs])\n"
+            "    ax[1].set_xlabel('epoch'); ax[1].set_ylabel('lr'); ax[1].set_title('learning rate')\n"
+            "    ax[1].grid(alpha=.3)\n"
+            "    plt.tight_layout(); plt.show()\n"
         ),
         code(
             "# If the cell above printed 'N epochs remaining', the session guard stopped it\n"
             "# cleanly — just Save & Run All again to continue. If it printed 'run complete',\n"
             "# the exported encoder is in /kaggle/working/weights/ and the next cell ships it.\n"
-            "!ls -la /kaggle/working/weights/ 2>/dev/null || echo 'not finished yet — re-run'\n"
+            "import pathlib\n"
+            "w = pathlib.Path('/kaggle/working/weights')\n"
+            "files = sorted(w.glob('*.pt')) if w.is_dir() else []\n"
+            "for f in files:\n"
+            "    print(f'{f.name}  {f.stat().st_size/1e6:.0f} MB')\n"
+            "if not files:\n"
+            "    print('no encoder yet — the run has not finished; Save & Run All again')\n"
         ),
         code(
             "# Publish the finished encoder (~88 MB) to the shared weights dataset that the\n"
@@ -488,14 +541,25 @@ def build_pretrain(
             "if not found:\n"
             "    print('nothing to publish yet — pretraining has not finished')\n"
             "else:\n"
+            "    # Stage one level down so --dir-mode zip uploads a single archive\n"
+            "    # instead of one HTTP request per file.\n"
             "    stage = pathlib.Path('/kaggle/working/weights_upload')\n"
-            "    stage.mkdir(exist_ok=True)\n"
-            "    # Carry over any encoders already in the dataset so a new version never\n"
-            "    # drops the other methods' weights.\n"
-            "    for p in glob.glob('/kaggle/input/jepa-thesis-weights/*.pt'):\n"
-            "        shutil.copy(p, stage)\n"
+            "    inner = stage / 'weights'\n"
+            "    inner.mkdir(parents=True, exist_ok=True)\n"
+            "\n"
+            "    # Carry over encoders already in the dataset: `datasets version` REPLACES\n"
+            "    # the whole contents, and --delete-old-versions makes that irreversible.\n"
+            "    # Search recursively — Kaggle now nests mounts as\n"
+            "    # /kaggle/input/datasets/<owner>/<slug>/, so a fixed path finds nothing\n"
+            "    # and the previous methods' encoders would be silently destroyed.\n"
+            "    carried = [p for p in glob.glob('/kaggle/input/**/*.pt', recursive=True)\n"
+            "               if 'jepa-thesis-weights' in p]\n"
+            "    for p in carried:\n"
+            "        shutil.copy(p, inner)\n"
+            "    print(f'carried over {len(carried)} existing encoder(s):',\n"
+            "          sorted(os.path.basename(p) for p in carried) or 'none')\n"
             "    for p in found:\n"
-            "        shutil.copy(p, stage)\n"
+            "        shutil.copy(p, inner)\n"
             "    (stage / 'dataset-metadata.json').write_text(json.dumps(\n"
             "        {'title': 'jepa-thesis-weights', 'id': SLUG,\n"
             "         'licenses': [{'name': 'CC0-1.0'}]}, indent=2))\n"
@@ -511,7 +575,7 @@ def build_pretrain(
             "           ['kaggle','datasets','create','-p',str(stage),'--dir-mode','zip'])\n"
             "    r = subprocess.run(cmd, capture_output=True, text=True)\n"
             "    print((r.stdout or '') + (r.stderr or ''))\n"
-            "    print('contents:', sorted(p.name for p in stage.glob('*.pt')))\n"
+            "    print('published:', sorted(p.name for p in inner.glob('*.pt')))\n"
         ),
     ]
     cells = assemble(intro, repo_url, branch, True, embed, body)
@@ -614,12 +678,13 @@ def main() -> None:
     ap.add_argument("--repo", default="https://github.com/morsalin101/jepa-thesis.git")
     ap.add_argument("--branch", default="main")
     ap.add_argument(
-        "--no-embed",
+        "--embed",
         action="store_true",
-        help="omit the %%writefile source cells (smaller notebooks; code comes from the clone)",
+        help="inline every source file as an editable %%writefile cell (adds ~40 cells "
+        "per notebook). Off by default: the git clone already puts the code on disk, so "
+        "these cells only matter if you want to read or patch it inside the Kaggle UI.",
     )
     args = ap.parse_args()
-    args.embed = not args.no_embed
 
     builders = [
         build_data_prep(args.user, args.repo, args.branch, args.embed),

@@ -8,6 +8,10 @@ env/
 
 # Data & outputs (don't commit large artifacts)
 data/
+datasets/
+hk256/
+hk_labeled256/
+*.zip
 outputs/
 figures/
 results/
