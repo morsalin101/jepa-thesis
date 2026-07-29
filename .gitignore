@@ -6,21 +6,24 @@ venv/
 env/
 *.egg-info/
 
-# Data & outputs (don't commit large artifacts)
-data/
-datasets/
-hk256/
-hk_labeled256/
+# Data & outputs (don't commit large artifacts).
+# Leading slashes are essential: an unanchored `data/` also matches `src/data/`,
+# which silently excluded the entire data module from the repo and produced a
+# ModuleNotFoundError only once the code ran on a fresh clone.
+/data/
+/datasets/
+/hk256/
+/hk_labeled256/
+/outputs/
+/figures/
+/results/
 *.zip
-outputs/
-figures/
-results/
 *.ckpt
 *.pt
 *.pth
 
 # Read-only reference clone of facebookresearch/ijepa (see README)
-reference/
+/reference/
 
 # Secrets — NEVER commit these
 kaggle.json

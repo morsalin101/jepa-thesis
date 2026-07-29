@@ -69,6 +69,14 @@ def scratch_dir() -> Path:
 
 # ------------------------------------------------------- AMP / device capability
 
+class UnsupportedGPU(RuntimeError):
+    """The assigned GPU cannot run this PyTorch build at all.
+
+    Distinct from "CUDA is flaky, fall back to CPU": there is no useful degraded mode,
+    and a silent CPU fallback would take days while looking healthy.
+    """
+
+
 @dataclass(frozen=True)
 class AmpConfig:
     """Resolved autocast settings for whatever accelerator we actually landed on."""
@@ -103,24 +111,47 @@ def amp_config(force_fp32: bool = False) -> AmpConfig:
             major, minor = torch.cuda.get_device_capability(0)
             sm = major * 10 + minor
             name = torch.cuda.get_device_name(0)
+
+            # Whether the GPU is usable at all is decided by the *installed build*, not
+            # by its generation: PyTorch ships kernels only for the architectures it was
+            # compiled against. Kaggle's current image drops sm_60, so a P100 cannot run
+            # a single CUDA op regardless of precision. Reasoning from the sm number
+            # alone (as this function previously did) produced a confident "continuing in
+            # fp16" immediately followed by a crash.
+            arches = [
+                int(a.split("_")[1])
+                for a in torch.cuda.get_arch_list()
+                if a.startswith("sm_") and a.split("_")[1].isdigit()
+            ]
+            if arches and sm < min(arches):
+                raise UnsupportedGPU(
+                    f"{name} (sm_{sm}) is not supported by this PyTorch build, which has "
+                    f"kernels for sm_{min(arches)}+ only. Nothing will run on this GPU.\n"
+                    "Fix: Kaggle session options -> Accelerator -> **GPU T4 x2**, then "
+                    "re-run. Your checkpoint (if any) is safe and the run will resume."
+                )
+
             if force_fp32:
                 return AmpConfig("cuda", None, False, sm, name, 1.0)
             if sm >= 80:
                 return AmpConfig("cuda", torch.bfloat16, False, sm, name, 3.0)
             if sm >= 70:
                 return AmpConfig("cuda", torch.float16, True, sm, name, 1.0)
-            if sm >= 60:
-                warnings.warn(
-                    f"{name} (sm_{sm}) has no tensor cores; expect roughly 2x slower "
-                    "training than a T4. Continuing in fp16. For a faster run, set "
-                    "Accelerator -> GPU T4 x2 in the Kaggle session options.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                return AmpConfig("cuda", torch.float16, True, sm, name, 0.45)
-            warnings.warn(f"{name} (sm_{sm}) is too old for AMP; running fp32.", RuntimeWarning)
-            return AmpConfig("cuda", None, False, sm, name, 0.2)
-        except Exception as e:  # noqa: BLE001 - CUDA present but unusable
+            # sm_60/61 with a build that still ships those kernels: works, no tensor
+            # cores, roughly half a T4.
+            warnings.warn(
+                f"{name} (sm_{sm}) has no tensor cores; expect roughly 2x slower "
+                "training than a T4. Continuing in fp16.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return AmpConfig("cuda", torch.float16, True, sm, name, 0.45)
+        except UnsupportedGPU:
+            # Deliberate refusal — must reach the caller, not be downgraded to a CPU
+            # fallback. Silently training a ViT on CPU would look like it was working
+            # while taking days.
+            raise
+        except Exception as e:  # noqa: BLE001 - CUDA present but genuinely unusable
             warnings.warn(f"CUDA present but unusable ({e}); falling back to CPU.", RuntimeWarning)
 
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
