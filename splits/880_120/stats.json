@@ -1,0 +1,42 @@
+{
+  "seed": 0,
+  "dup_threshold": 6,
+  "n_images": 1000,
+  "n_groups": 973,
+  "largest_group": 4,
+  "multi_image_groups": 19,
+  "counts": {
+    "train": 880,
+    "val": 120
+  },
+  "stratum_distribution": {
+    "train": {
+      "a0r0": 67,
+      "a0r1": 79,
+      "a0r2": 69,
+      "a1r0": 66,
+      "a1r1": 75,
+      "a1r2": 79,
+      "a2r0": 72,
+      "a2r1": 66,
+      "a2r2": 84,
+      "a3r0": 81,
+      "a3r1": 68,
+      "a3r2": 74
+    },
+    "val": {
+      "a0r0": 9,
+      "a0r1": 10,
+      "a0r2": 9,
+      "a1r0": 9,
+      "a1r1": 11,
+      "a1r2": 11,
+      "a2r0": 9,
+      "a2r1": 10,
+      "a2r2": 11,
+      "a3r0": 11,
+      "a3r1": 10,
+      "a3r2": 10
+    }
+  }
+}
