@@ -97,7 +97,14 @@ def build_seg_model(cfg: SegCfg) -> nn.Module:
 
 
 def resolve_encoder_ckpt(cfg: SegCfg, weights_dir: Path) -> Path | None:
-    """Find the exported encoder for this arm. `random` deliberately returns None."""
+    """Find the exported encoder for this arm. `random` deliberately returns None.
+
+    Searches the local working directory *and* any mounted Kaggle dataset. Relying on a
+    notebook cell to copy the weights into place first was fragile: Kaggle changed its
+    mount layout to /kaggle/input/datasets/<owner>/<slug>/, the fixed-path copy silently
+    found nothing, and the failure surfaced here as a confusing "run pretraining first"
+    for a run that had already finished.
+    """
     if cfg.encoder == "random":
         return None
     if cfg.pretrained_ckpt:
@@ -105,12 +112,27 @@ def resolve_encoder_ckpt(cfg: SegCfg, weights_dir: Path) -> Path | None:
         if not p.is_file():
             raise FileNotFoundError(f"pretrained_ckpt not found: {p}")
         return p
+
     pattern = f"{cfg.encoder}_{cfg.model.arch}_*.pt"
     matches = sorted(weights_dir.glob(pattern))
+
+    if not matches and Path("/kaggle/input").is_dir():
+        matches = sorted(Path("/kaggle/input").glob(f"**/{pattern}"))
+        if matches:
+            print(f"[segment] found encoder in a mounted dataset: {matches[-1]}")
+
     if not matches:
+        searched = [str(weights_dir / pattern)]
+        if Path("/kaggle/input").is_dir():
+            searched.append(f"/kaggle/input/**/{pattern}")
+            available = sorted(p.name for p in Path("/kaggle/input").glob("**/*.pt"))
+            hint = f"\n.pt files that ARE mounted: {available or 'none'}"
+        else:
+            hint = ""
         raise FileNotFoundError(
-            f"no exported encoder matching {weights_dir / pattern}. Run pretraining for "
-            f"'{cfg.encoder}' first, or pass --pretrained-ckpt."
+            f"no exported encoder matching {pattern}.\nSearched: {searched}{hint}\n"
+            f"Either run pretraining for '{cfg.encoder}', attach the "
+            f"jepa-thesis-weights dataset, or pass --pretrained-ckpt."
         )
     return matches[-1]
 
